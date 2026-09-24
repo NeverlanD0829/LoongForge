@@ -159,15 +159,50 @@ Training throughput speedups over mainstream open-source baselines — each mode
 <a id="quickstart"></a>
 ## ⚡ Quick Start
 
-**1. Install** — use the [**unified prebuilt Docker image**](https://hub.docker.com/u/loongforge) (one image for all model families) or build from source:
-- **NVIDIA GPU**: [Installation Guide](https://loongforge.readthedocs.io/en/latest/get_started/installation.html)
-- **Kunlun XPU**: [Installation Guide](https://loongforge.readthedocs.io/en/latest/kunlun_tutorial/install_p800.html)
+### 1. Install
 
-**2. Pick a tutorial** — by hardware and modality:
+Use the [latest prebuilt NVIDIA GPU image](https://hub.docker.com/u/loongforge) with NVIDIA Container Toolkit installed:
+
+```bash
+docker pull loongforge/loongforge:latest
+mkdir -p workspace
+docker run --gpus all --ipc=host -it --rm \
+  -v "$(pwd)/workspace:/workspace/data" \
+  -w /workspace/LoongForge \
+  loongforge/loongforge:latest bash
+```
+
+[Source installation](https://loongforge.readthedocs.io/en/latest/get_started/installation.html) · [Kunlun XPU installation](https://loongforge.readthedocs.io/en/latest/kunlun_tutorial/install_p800.html).
+
+### 2. Pick a tutorial — by hardware and modality
+
 - **NVIDIA GPU**: [LLM](https://loongforge.readthedocs.io/en/latest/llm_tutorial/quick_start_llm_pretrain.html) · [VLM](https://loongforge.readthedocs.io/en/latest/vlm_tutorial/quick_start_vlm_pretrain.html) · [VLA & WAM](https://loongforge.readthedocs.io/en/latest/embodied_tutorial/quick_start_index.html) · [Diffusion](https://loongforge.readthedocs.io/en/latest/wan_tutorial/quick_start_wan_training.html)
 - **Kunlun XPU**: [Kunlun XPU Tutorials](https://loongforge.readthedocs.io/en/latest/kunlun_tutorial/README.html)
 
-**3. Find your model's scripts** — ready-to-run launch scripts are available under [`examples/`](./examples) / [`examples_xpu/`](./examples_xpu), with configs in [`configs/models/`](./configs/models).
+### 3. Find your model's scripts
+
+Launch scripts are available under [`examples/`](./examples/) (NVIDIA GPU) and [`examples_xpu/`](./examples_xpu/) (Kunlun XPU), with configs in [`configs/models/`](./configs/models/).
+
+#### Example: DreamZero LoRA fine-tuning
+
+This example uses **DreamZero Wan2.2-5B LoRA on a single node with 8 GPUs and FSDP**. Follow the [tutorial](https://loongforge.readthedocs.io/en/latest/embodied_tutorial/quick_start_dreamzero.html) to prepare weights (including Wan2.1 CLIP) and DROID data in LeRobot v2 format, then run inside the container:
+
+```bash
+cd /workspace/LoongForge
+export WAN22_CKPT_DIR=/workspace/data/dreamzero/checkpoints/Wan2.2-TI2V-5B
+export WAN21_CKPT_DIR=/workspace/data/dreamzero/checkpoints/Wan2.1-I2V-14B-480P
+export TOKENIZER_PATH="$WAN22_CKPT_DIR/google/umt5-xxl"
+export DATA_PATH=/workspace/data/dreamzero/data/droid_lerobot
+
+EMBODIMENT_TAG=oxe_droid \
+  bash examples/embodied/dreamzero/prepare_dreamzero_dataset.sh
+
+GPUS_PER_NODE=8 TRAIN_ITERS=20 SAVE_INTERVAL=20 \
+OUTPUT_DIR=/workspace/data/dreamzero/outputs/lora \
+  bash examples/embodied/dreamzero/run_dreamzero_wan22_5b_lora_fsdp_finetune.sh
+```
+
+The example runs 20 steps and saves outputs under `OUTPUT_DIR`.
 
 <a id="models"></a>
 ## 🏛️ Supported Models
