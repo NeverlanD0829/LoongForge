@@ -30,9 +30,6 @@ import transformers
 from transformers.feature_extraction_utils import BatchFeature
 
 from loongforge.embodied.model.groot_n1_7.modules import cuda_graph_flash_attention as _graph_safe_fa2
-from loongforge.embodied.model.groot_n1_7.modules.cuda_graph_flash_attention import (
-    maybe_install_graph_safe_fa2_patches,
-)
 
 logger = logging.getLogger(__name__)
 

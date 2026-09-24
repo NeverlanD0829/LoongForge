@@ -8,7 +8,6 @@ from __future__ import annotations
 import dataclasses
 import ctypes
 import logging
-import os
 from contextlib import contextmanager, nullcontext
 from typing import Any
 
