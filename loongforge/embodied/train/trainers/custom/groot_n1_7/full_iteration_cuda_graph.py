@@ -379,7 +379,7 @@ class GrootN1d7FullIterationCudaGraphRunner:
         # Use the same in-place gradient clipping as eager. The optimizer's
         # capturable step consumes those clipped buffers directly, which keeps
         # Graph-on and Graph-off TEFusedAdamW numerically identical.
-        self._fused_optimizer_grad_clip = False
+        self._fused_optimizer_grad_clip = True
         self._direct_grad_write = True
         self._backbone_pipeline_enabled = True
         self._prefetched_cpu_batch: Any = None
@@ -401,6 +401,7 @@ class GrootN1d7FullIterationCudaGraphRunner:
         self._fp8_recipe = None
         self._fp8_tensor_pointers: dict[str, int] | None = None
         self._fp8_skip_weight_update_ptr: int | None = None
+        self._fp8_replay_state_checked = False
         # CUDA stream capture records work without executing it.  The first
         # graph replay must therefore consume the timestep sampled immediately
         # before capture instead of sampling a second value.
@@ -1510,6 +1511,7 @@ class GrootN1d7FullIterationCudaGraphRunner:
             )
         if self._fp8_enabled:
             self._remember_fp8_pointers(self._backbone())
+            self._fp8_replay_state_checked = False
         if self._direct_grad_write:
             missing_gradients = [
                 name
@@ -1596,6 +1598,7 @@ class GrootN1d7FullIterationCudaGraphRunner:
             )
         if self._fp8_enabled:
             self._remember_fp8_pointers(self._backbone())
+            self._fp8_replay_state_checked = False
         if self._direct_grad_write:
             missing_gradients = [
                 name
@@ -1653,7 +1656,7 @@ class GrootN1d7FullIterationCudaGraphRunner:
         else:
             self._fill_time_buffer()
         assert self.graph is not None
-        if self._fp8_enabled:
+        if self._fp8_enabled and not self._fp8_replay_state_checked:
             self._assert_fp8_pointers_stable(self._backbone())
             skip_ptr = self._fp8_skip_weight_update_ptr
             if skip_ptr is not None:
@@ -1662,6 +1665,7 @@ class GrootN1d7FullIterationCudaGraphRunner:
                 skip_tensor = FP8GlobalStateManager.get_skip_fp8_weight_update_tensor()
                 if skip_tensor is None or skip_tensor.data_ptr() != skip_ptr:
                     raise RuntimeError("TE FP8 weight-cache scalar changed before replay.")
+            self._fp8_replay_state_checked = True
         default_stream = torch.cuda.current_stream(self.ctx.device)
         if self._backbone_pipeline_enabled:
             self._sync_pipeline_ddp_buffers()
