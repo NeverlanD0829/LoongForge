@@ -399,7 +399,6 @@ class GrootN1d7FullIterationCudaGraphRunner:
         self._backbone_progress_layer = 8
         self._fp8_enabled = bool(getattr(self.training_args, "fp8", False))
         self._fp8_recipe = None
-        self._fp8_group = None
         self._fp8_tensor_pointers: dict[str, int] | None = None
         self._fp8_skip_weight_update_ptr: int | None = None
         # CUDA stream capture records work without executing it.  The first
@@ -555,29 +554,7 @@ class GrootN1d7FullIterationCudaGraphRunner:
                     "Fused optimizer gradient clipping requires --clip-grad > 0."
                 )
         if self._fp8_enabled:
-            if getattr(self.training_args, "fp8_backend", None) != "te":
-                raise RuntimeError(
-                    "GR00T-N1.7 CUDA graph FP8 support requires the TE backend."
-                )
-            if getattr(self.training_args, "fp8_te_recipe", None) != "blockwise":
-                raise RuntimeError(
-                    "GR00T-N1.7 CUDA graph FP8 support requires the blockwise TE recipe."
-                )
-            if getattr(self.training_args, "cuda_graph_scope", None) != "full_iteration":
-                raise RuntimeError(
-                    "GR00T-N1.7 CUDA graph FP8 support requires full_iteration scope."
-                )
-            from loongforge.embodied.distributed.fp8_utils.te_fp8.recipe import (
-                build_fp8_recipe,
-            )
-
-            self._fp8_recipe = getattr(self.trainer, "_fp8_recipe", None)
-            if self._fp8_recipe is None:
-                self._fp8_recipe = build_fp8_recipe(
-                    self.training_args.fp8_te_recipe,
-                    recipe_args=self.training_args,
-                )
-                self.trainer._fp8_recipe = self._fp8_recipe
+            self._fp8_recipe = self.trainer._get_fp8_recipe()
             if self._fp8_recipe.__class__.__name__ != "Float8BlockScaling":
                 raise RuntimeError(
                     "Expected TransformerEngine Float8BlockScaling for the GR00T graph path."
@@ -714,14 +691,12 @@ class GrootN1d7FullIterationCudaGraphRunner:
             raise RuntimeError("TE FP8 weight-cache scalar was reallocated.")
 
         # Blockwise TE does not use delayed global amax reduction, but assigning
-        # the cached recipe/group makes the module metadata explicit and mirrors
-        # Megatron's graph wrapper for future recipe extensions.
+        # the cached recipe makes the module metadata explicit and mirrors
+        # Megatron's graph wrapper.
         for child in module.modules():
             fp8_meta = getattr(child, "fp8_meta", None)
             if isinstance(fp8_meta, dict):
                 fp8_meta["recipe"] = self._fp8_recipe
-                if self._fp8_group is not None:
-                    fp8_meta["fp8_group"] = self._fp8_group
 
     @contextmanager
     def _fp8_capture_context(self, module: torch.nn.Module):

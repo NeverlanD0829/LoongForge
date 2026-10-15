@@ -140,16 +140,12 @@ DISTRIBUTED_TRAINING_ARGS=(
     # --dataloader-seed-workers
 )
 
-# ── FP8 (model.compile_model stays false, so this does not hit the
-# --fp8/compile_model=true conflict in train/validators.py)
+# ── FP8
 FP8_ARGS=(
-    # --fp8
-    # --fp8-backend te
-    # --fp8-te-recipe blockwise
-    # --fp8-min-dim 2048
-    # --fp8-te-block-x-scaling-dim "${FP8_TE_BLOCK_X_SCALING_DIM:-1}"
-    # --fp8-te-block-w-scaling-dim "${FP8_TE_BLOCK_W_SCALING_DIM:-2}"
-    # --fp8-te-block-grad-scaling-dim "${FP8_TE_BLOCK_GRAD_SCALING_DIM:-1}"
+    --fp8
+    --fp8-backend te
+    --fp8-te-recipe blockwise
+    --fp8-min-dim 2048
 )
 
 # ── FP8 DDP comm hook

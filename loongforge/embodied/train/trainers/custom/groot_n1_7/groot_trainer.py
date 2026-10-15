@@ -6,22 +6,114 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager, nullcontext
+from dataclasses import is_dataclass, replace
 
 import torch
 
 from loongforge.embodied.distributed.parallel import wrap_model
-from loongforge.embodied.train.trainers.custom.groot_n1_7.groot_optimizer import (
-    build_groot_optimizer,
-)
 from loongforge.embodied.distributed.utils import unwrap_model
 from loongforge.embodied.train.trainers.custom.groot_n1_7.full_iteration_cuda_graph import (
     GrootN1d7FullIterationCudaGraphRunner,
 )
-
+from loongforge.embodied.train.trainers.custom.groot_n1_7.groot_optimizer import (
+    build_groot_optimizer,
+)
 from loongforge.embodied.train.trainers.supervised.finetune_trainer import FinetuneTrainer
 from loongforge.embodied.train.utils.utils import set_seed
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_fp8_cuda_graph_args(training_args) -> None:
+    """Validate the FP8 graph contract owned by the GR00T-N1.7 trainer."""
+    if not (training_args.fp8 and training_args.cuda_graph_impl == "local"):
+        return
+    if training_args.cuda_graph_scope != "full_iteration":
+        raise ValueError(
+            "GR00T-N1.7 FP8 CUDA graph support requires "
+            "--cuda-graph-scope=full_iteration."
+        )
+    if training_args.fp8_backend != "te":
+        raise ValueError(
+            "GR00T-N1.7 FP8 CUDA graph support requires --fp8-backend=te."
+        )
+    if training_args.fp8_te_recipe != "blockwise":
+        raise ValueError(
+            "GR00T-N1.7 FP8 CUDA graph support requires "
+            "--fp8-te-recipe=blockwise."
+        )
+    if training_args.gradient_accumulation_steps != 1:
+        raise ValueError(
+            "GR00T-N1.7 FP8 full-iteration CUDA graph requires "
+            "--gradient-accumulation-steps=1."
+        )
+    if not training_args.cuda_graph_ddp_sync_in_graph:
+        raise ValueError(
+            "GR00T-N1.7 FP8 full-iteration CUDA graph requires "
+            "--cuda-graph-ddp-sync-in-graph."
+        )
+    if training_args.check_for_nan_in_loss_and_grad:
+        raise ValueError(
+            "GR00T-N1.7 FP8 full-iteration CUDA graph requires "
+            "--no-check-for-nan-in-loss-and-grad."
+        )
+
+
+def _build_groot_fp8_recipe(training_args):
+    """Build the run-owned TE recipe and align TE 2.9 blockwise QParams."""
+    from loongforge.embodied.distributed.fp8_utils.te_fp8.recipe import (
+        build_fp8_recipe,
+    )
+
+    recipe = build_fp8_recipe(
+        training_args.fp8_te_recipe,
+        recipe_args=training_args,
+    )
+    if training_args.fp8_te_recipe != "blockwise":
+        return recipe
+
+    use_f32_scales = bool(getattr(recipe, "use_f32_scales", False))
+    for name in (
+        "fp8_quant_fwd_inp",
+        "fp8_quant_fwd_weight",
+        "fp8_quant_bwd_grad",
+    ):
+        qparams = getattr(recipe, name, None)
+        if qparams is None or not hasattr(qparams, "power_2_scale"):
+            continue
+        if is_dataclass(qparams):
+            qparams = replace(qparams, power_2_scale=not use_f32_scales)
+        else:
+            qparams.power_2_scale = not use_f32_scales
+        setattr(recipe, name, qparams)
+    return recipe
+
+
+@contextmanager
+def _groot_fp8_graph_capture_ctx(recipe):
+    """Enter TE's graph-aware autocast while recording a GR00T CUDA graph."""
+    try:
+        from transformer_engine.pytorch import autocast as te_autocast
+    except ImportError:
+        from transformer_engine.pytorch import fp8_autocast as te_autocast
+
+        with te_autocast(
+            enabled=True,
+            fp8_recipe=recipe,
+            fp8_group=None,
+            _graph=True,
+        ):
+            yield
+        return
+
+    with te_autocast(
+        enabled=True,
+        recipe=recipe,
+        amax_reduction_group=None,
+        _graph=True,
+    ):
+        yield
 
 
 def _full_iteration_graph_stream_priority(backbone_pipeline: bool) -> int:
@@ -54,9 +146,37 @@ class GrootN1d7Trainer(FinetuneTrainer):
     """GR00T-N1.7 finetune trainer with an optional full-iteration CUDA graph."""
 
     def __init__(self, training_args, model_cfg, data_cfg):
+        _validate_fp8_cuda_graph_args(training_args)
         super().__init__(training_args, model_cfg, data_cfg)
         self._train_step_runner: GrootN1d7FullIterationCudaGraphRunner | None = None
         self._full_iteration_graph_stream: torch.cuda.Stream | None = None
+        self._fp8_recipe = None
+
+    def _get_fp8_recipe(self):
+        """Return the single TE recipe shared by eager warmup and graph capture."""
+        if self._fp8_recipe is None:
+            self._fp8_recipe = _build_groot_fp8_recipe(self.training_args)
+        return self._fp8_recipe
+
+    def _fp8_forward_ctx(self):
+        """Use the trainer-owned recipe for GR00T TE FP8 forwards."""
+        if not (
+            self.training_args.fp8 and self.training_args.fp8_backend == "te"
+        ):
+            return super()._fp8_forward_ctx()
+
+        from transformer_engine.pytorch import fp8_autocast
+
+        return fp8_autocast(
+            enabled=True,
+            fp8_recipe=self._get_fp8_recipe(),
+        )
+
+    def _fp8_graph_capture_ctx(self):
+        """Return the GR00T-specific graph-aware TE FP8 context."""
+        if not self.training_args.fp8:
+            return nullcontext()
+        return _groot_fp8_graph_capture_ctx(self._get_fp8_recipe())
 
     def _setup(self) -> None:
         """Build training resources and match HF Trainer's post-build RNG reset."""
