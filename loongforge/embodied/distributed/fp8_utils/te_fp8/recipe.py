@@ -88,15 +88,6 @@ def _recipe_kwargs(recipe_name: str, recipe_args, te_recipe) -> dict:
             kwargs["backward_override"] = (
                 recipe_args.fp8_te_block_backward_override
             )
-        kwargs["x_block_scaling_dim"] = getattr(
-            recipe_args, "fp8_te_block_x_scaling_dim", 1
-        )
-        kwargs["w_block_scaling_dim"] = getattr(
-            recipe_args, "fp8_te_block_w_scaling_dim", 2
-        )
-        kwargs["grad_block_scaling_dim"] = getattr(
-            recipe_args, "fp8_te_block_grad_scaling_dim", 1
-        )
     elif recipe_name == "mxfp8":
         kwargs["margin"] = recipe_args.fp8_te_margin
     return kwargs
