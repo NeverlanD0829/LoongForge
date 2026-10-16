@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field, is_dataclass, replace
 from functools import partial
@@ -26,6 +27,19 @@ from loongforge.embodied.train.trainers.supervised.finetune_trainer import Finet
 from loongforge.embodied.train.utils.utils import set_seed
 
 logger = logging.getLogger(__name__)
+
+
+def _ddp_bucket_alignment_enabled(training_args=None) -> bool:
+    # Bucket rebuilding changes DDP's floating-point reduction order. Keep the
+    # reference bucket order for the exact eager/Graph baseline. FP8 A2A needs
+    # the rebuilt buckets to avoid the oversized fused first bucket.
+    if os.environ.get("LOONGFORGE_DDP_BUCKET_ALIGNMENT", "0") == "1":
+        return True
+    return bool(
+        training_args is not None
+        and getattr(training_args, "ddp_comm_hook", None)
+        == "fp8_a2a_allgather_hook"
+    )
 
 
 @dataclass
@@ -314,7 +328,8 @@ class GrootN1d7Trainer(FinetuneTrainer):
             graph_stream.wait_stream(default_stream)
             with torch.cuda.stream(graph_stream):
                 self.model = wrap_model(self.model, self.training_args, self.ctx)
-            _arm_static_graph_bucket_warmup(self.model)
+            if _ddp_bucket_alignment_enabled(self.training_args):
+                _arm_static_graph_bucket_warmup(self.model)
             default_stream.wait_stream(graph_stream)
             torch.cuda.synchronize(self.ctx.device)
             self._full_iteration_graph_stream = graph_stream
@@ -362,7 +377,11 @@ class GrootN1d7Trainer(FinetuneTrainer):
             elif hasattr(value, "item") and value.__class__.__module__.split(".")[0] == "numpy":
                 metrics[key] = value.item()
         if (
-            isinstance(self._train_step_runner, GrootN1d7FullIterationCudaGraphRunner)
+            _ddp_bucket_alignment_enabled(self.training_args)
+            and isinstance(
+                self._train_step_runner,
+                GrootN1d7FullIterationCudaGraphRunner,
+            )
             and self.completed_steps == 1
         ):
             _align_static_graph_buckets_after_warmup(self.model)

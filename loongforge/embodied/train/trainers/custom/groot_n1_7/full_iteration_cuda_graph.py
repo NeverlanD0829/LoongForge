@@ -8,6 +8,7 @@ from __future__ import annotations
 import dataclasses
 import ctypes
 import logging
+from collections.abc import Mapping
 from contextlib import contextmanager, nullcontext
 from typing import Any
 
@@ -97,6 +98,7 @@ class _GraphValidationBatch:
     image_grid_thw: torch.Tensor | None
     input_ids: torch.Tensor | None
     attention_mask: torch.Tensor | None
+    structure: tuple
 
 
 @dataclasses.dataclass
@@ -109,6 +111,58 @@ class _ActionGraphBatch:
     def to_action_head_inputs(self) -> tuple[BatchFeature, BatchFeature]:
         """Return the static backbone output and action input pair."""
         return self.backbone_output, self.action_input
+
+
+def _graph_batch_structure(value: Any, path: str = "batch") -> tuple:
+    """Return the CPU-visible structural contract recorded by the graph."""
+    if isinstance(value, torch.Tensor):
+        signature = (
+            "tensor",
+            tuple(value.shape),
+            tuple(value.stride()),
+            value.storage_offset(),
+            value.dtype,
+            value.layout,
+        )
+        if path.endswith("image_grid_thw"):
+            signature += (tuple(value.detach().cpu().reshape(-1).tolist()),)
+        return ((path, signature),)
+    if isinstance(value, BatchFeature):
+        output = [(path, ("BatchFeature", tuple(value.keys())))]
+        for key, item in value.items():
+            output.extend(_graph_batch_structure(item, f"{path}.{key}"))
+        return tuple(output)
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        output = [(path, ("dataclass", type(value).__qualname__))]
+        for descriptor in dataclasses.fields(value):
+            if descriptor.name.startswith("_loongforge_host_"):
+                continue
+            output.extend(
+                _graph_batch_structure(
+                    getattr(value, descriptor.name), f"{path}.{descriptor.name}"
+                )
+            )
+        return tuple(output)
+    if isinstance(value, Mapping):
+        output = [(path, ("mapping", type(value).__qualname__, tuple(value.keys())))]
+        for key, item in value.items():
+            output.extend(_graph_batch_structure(item, f"{path}.{key}"))
+        return tuple(output)
+    if isinstance(value, (list, tuple)):
+        output = [(path, (type(value).__qualname__, len(value)))]
+        for index, item in enumerate(value):
+            output.extend(_graph_batch_structure(item, f"{path}[{index}]"))
+        return tuple(output)
+    return ((path, (type(value).__qualname__, value)),)
+
+
+def _first_structure_difference(expected: tuple, actual: tuple) -> str | None:
+    for index, (expected_item, actual_item) in enumerate(zip(expected, actual)):
+        if expected_item != actual_item:
+            return f"entry {index}: {expected_item!r} != {actual_item!r}"
+    if len(expected) != len(actual):
+        return f"signature length {len(expected)} != {len(actual)}"
+    return None
 
 
 def _clone_validation_batch(batch: Any) -> _GraphValidationBatch:
@@ -126,6 +180,7 @@ def _clone_validation_batch(batch: Any) -> _GraphValidationBatch:
         image_grid_thw=clone_cpu("image_grid_thw"),
         input_ids=clone_cpu("input_ids"),
         attention_mask=clone_cpu("attention_mask"),
+        structure=_graph_batch_structure(batch),
     )
 
 
@@ -354,7 +409,10 @@ class GrootN1d7FullIterationCudaGraphRunner:
         self.capture_count = 0
         self.fallback_count = 0
         self._eager_fallback = False
-        self._fallback_cpu_batch: Any = None
+        self._fallback_pending = False
+        self._fallback_reason: str | None = None
+        self._fallback_flag = torch.zeros((), dtype=torch.int32)
+        self._fallback_work = None
         self._optimizer_validated = False
         self._noop_ddp_logger = _NoopDdpLogger()
         self._copy_stream: torch.cuda.Stream | None = None
@@ -376,10 +434,12 @@ class GrootN1d7FullIterationCudaGraphRunner:
         # campaign shell variables cannot silently change graph semantics.
         self._input_prefetch_enabled = True
         self._time_prefetch_enabled = False
-        # Use the same in-place gradient clipping as eager. The optimizer's
-        # capturable step consumes those clipped buffers directly, which keeps
-        # Graph-on and Graph-off TEFusedAdamW numerically identical.
-        self._fused_optimizer_grad_clip = True
+        # The FP8 communication path uses the fused clip validated with its
+        # aligned buckets. Keep the native clip for the exact no-hook baseline.
+        self._fused_optimizer_grad_clip = (
+            getattr(self.training_args, "ddp_comm_hook", None)
+            == "fp8_a2a_allgather_hook"
+        )
         self._direct_grad_write = True
         self._backbone_pipeline_enabled = True
         self._prefetched_cpu_batch: Any = None
@@ -971,11 +1031,17 @@ class GrootN1d7FullIterationCudaGraphRunner:
             prepare_action_head(batch, backbone.model.config.image_token_id)
 
     def _graph_batch_incompatibility(self, batch: Any) -> str | None:
+        if self.validation_batch is None:
+            return "Full-iteration CUDA graph validation batch is missing."
+        difference = _first_structure_difference(
+            self.validation_batch.structure,
+            _graph_batch_structure(batch),
+        )
+        if difference is not None:
+            return f"model-ready batch structure changed ({difference})"
         try:
             validate = getattr(self._backbone(), "validate_cuda_graph_batch", None)
             if callable(validate):
-                if self.validation_batch is None:
-                    raise RuntimeError("Full-iteration CUDA graph validation batch is missing.")
                 validate(self.validation_batch, batch)
             validate_action = getattr(
                 self._action_head(),
@@ -988,20 +1054,33 @@ class GrootN1d7FullIterationCudaGraphRunner:
             return str(error)
         return None
 
-    def _synchronize_fallback(self, local_reason: str | None) -> bool:
-        flag = torch.tensor(
-            int(local_reason is not None), dtype=torch.int32, device=self.ctx.device
-        )
-        if self.ctx.is_distributed:
-            dist.all_reduce(flag, op=dist.ReduceOp.MAX)
-        fallback = bool(flag.item())
-        if fallback and self.ctx.is_main:
-            logger.warning(
-                "Full-iteration CUDA graph input became incompatible%s; "
-                "all ranks are switching permanently to eager execution.",
-                f": {local_reason}" if local_reason else " on another rank",
+    def _start_fallback_check(self, batch: Any) -> None:
+        if self._fallback_work is not None:
+            raise RuntimeError("A CUDA Graph fallback check is already in flight.")
+        self._fallback_reason = self._graph_batch_incompatibility(batch)
+        self._fallback_flag.fill_(int(self._fallback_reason is not None))
+        if self.ctx.is_distributed and self.ctx.world_size > 1:
+            # DistributedContext uses the composite cpu:gloo,cuda:nccl backend.
+            # Keeping this tensor on CPU routes the control collective through
+            # Gloo, independently of graph-captured NCCL communication.
+            self._fallback_work = dist.all_reduce(
+                self._fallback_flag,
+                op=dist.ReduceOp.MAX,
+                async_op=True,
             )
-        return fallback
+
+    def _finish_fallback_check(self) -> bool:
+        if self._fallback_work is not None:
+            self._fallback_work.wait()
+            self._fallback_work = None
+        self._fallback_pending = bool(self._fallback_flag.item())
+        if self._fallback_pending and self.ctx.is_main:
+            logger.warning(
+                "Full-iteration CUDA graph input became incompatible%s; all ranks "
+                "will switch permanently to eager execution before this batch.",
+                f": {self._fallback_reason}" if self._fallback_reason else " on another rank",
+            )
+        return self._fallback_pending
 
     def _ensure_copy_resources(self) -> None:
         if self._copy_stream is None:
@@ -1026,7 +1105,6 @@ class GrootN1d7FullIterationCudaGraphRunner:
         if (
             not self._input_prefetch_enabled
             or self.graph is None
-            or self._eager_fallback
         ):
             return
         completed_steps = self.warmup_count + self.replay_count
@@ -1037,12 +1115,7 @@ class GrootN1d7FullIterationCudaGraphRunner:
 
         with self.trainer._stage_timers("batch-generator"):
             cpu_batch = self._fetch_cpu_batch()
-            local_reason = self._graph_batch_incompatibility(cpu_batch)
-            if self._synchronize_fallback(local_reason):
-                self._fallback_cpu_batch = cpu_batch
-                self._eager_fallback = True
-                self._wait_default_stream()
-                return
+            self._start_fallback_check(cpu_batch)
             self._ensure_copy_resources()
             assert self._copy_stream is not None
             with torch.cuda.stream(self._copy_stream):
@@ -1050,6 +1123,10 @@ class GrootN1d7FullIterationCudaGraphRunner:
 
         self._prefetched_cpu_batch = cpu_batch
         self._prefetched_gpu_batch = gpu_batch
+        # The CPU collective overlaps model-ready batch staging and the current
+        # graph replay. Resolve it before any rank can launch the next backbone
+        # graph with an incompatible input.
+        self._finish_fallback_check()
 
     def _consume_prefetched_batch(self) -> Any:
         if self._backbone_pipeline_enabled:
@@ -1072,6 +1149,8 @@ class GrootN1d7FullIterationCudaGraphRunner:
 
     def _launch_prefetched_backbone(self) -> None:
         if not self._backbone_pipeline_enabled or self._prefetched_gpu_batch is None:
+            return
+        if self._fallback_pending:
             return
         if self._backbone_graph is None or self._backbone_static_input is None:
             raise RuntimeError("Frozen-backbone graph was not captured before prefetch launch.")
@@ -1132,13 +1211,81 @@ class GrootN1d7FullIterationCudaGraphRunner:
         self._backbone_pending = False
         return self.static_batch
 
+    def _clear_graph_model_metadata(self) -> None:
+        backbone = self._backbone()
+        qwen_model = getattr(backbone.model, "model", backbone.model)
+        from loongforge.embodied.model.groot_n1_7.modules import qwen3_backbone
+
+        qwen3_backbone._CUDA_GRAPH_ATTENTION_MASK_METADATA.clear()
+        for owner in (backbone, qwen_model, getattr(backbone, "language_model", None)):
+            if owner is None:
+                continue
+            for name in tuple(owner.__dict__):
+                if name.startswith("_loongforge_cuda_graph_"):
+                    owner.__dict__.pop(name, None)
+
+    def _switch_to_eager(self) -> Any:
+        """Release graph-owned state and return the incompatible staged batch."""
+        if not self._fallback_pending or self._prefetched_gpu_batch is None:
+            raise RuntimeError("CUDA Graph eager fallback has no staged batch.")
+
+        fallback_batch = self._prefetched_gpu_batch
+        torch.cuda.synchronize(self.ctx.device)
+        self.ctx.barrier()
+
+        if self.graph is not None:
+            self.graph.reset()
+        if self._backbone_graph is not None:
+            self._backbone_graph.reset()
+        self.graph = None
+        self._backbone_graph = None
+        self.outputs = None
+        self.static_batch = None
+        self.validation_batch = None
+        self._backbone_static_input = None
+        self._backbone_output = None
+        self._prefetched_action_input = None
+        self._prefetched_cpu_batch = None
+        self._prefetched_gpu_batch = None
+        self._backbone_pending = False
+        self._capture_replay_pending = False
+        self._fp8_tensor_pointers = None
+        self._fp8_replay_state_checked = False
+        self.time_buffer = None
+        self._time_prefetch_buffer = None
+        self._time_prefetch_host_buffers = []
+        self._time_prefetch_pending = False
+
+        if self._saved_ddp_broadcast_buffers is not None:
+            self.trainer.model.broadcast_buffers = self._saved_ddp_broadcast_buffers
+            self._saved_ddp_broadcast_buffers = None
+        if hasattr(self.trainer.model, "logger"):
+            self.trainer.model.logger = self._noop_ddp_logger
+
+        self._clear_time_buffer()
+        self._clear_noise_buffer()
+        self._clear_state_dropout_buffer()
+        self._clear_graph_model_metadata()
+        torch.cuda.empty_cache()
+
+        self._eager_fallback = True
+        self._fallback_pending = False
+        self.fallback_count += 1
+        if self.ctx.is_main:
+            logger.warning(
+                "Full-iteration CUDA graph disabled after %d replays; continuing "
+                "with standard DDP eager steps and the existing optimizer state.",
+                self.replay_count,
+            )
+        self.ctx.barrier()
+        return fallback_batch
+
     def _fetch_batch(self) -> Any:
         with self.trainer._stage_timers("batch-generator"):
-            if self._eager_fallback:
-                cpu_batch = self._fallback_cpu_batch
-                self._fallback_cpu_batch = None
-                if cpu_batch is None:
-                    cpu_batch = self._fetch_cpu_batch()
+            if self._fallback_pending:
+                batch = self._switch_to_eager()
+            elif self._eager_fallback:
+                cpu_batch = self._fetch_cpu_batch()
                 batch = self.trainer._move_batch_to_device(cpu_batch)
             elif self.graph is not None and self._input_prefetch_enabled:
                 batch = self._consume_prefetched_batch()
@@ -1152,25 +1299,23 @@ class GrootN1d7FullIterationCudaGraphRunner:
                 if self.graph is not None:
                     if self.static_batch is None:
                         raise RuntimeError("Full-iteration CUDA graph static batch is missing.")
-                    local_reason = self._graph_batch_incompatibility(cpu_batch)
-                    if self._synchronize_fallback(local_reason):
-                        self._eager_fallback = True
-                        batch = self.trainer._move_batch_to_device(cpu_batch)
-                        cpu_batch = None
-                    if cpu_batch is None:
-                        pass
-                    else:
-                        self._copy_stream.wait_stream(default_stream)
-                        with torch.cuda.stream(self._copy_stream):
-                            _copy_static(self.static_batch, cpu_batch)
-                            update_metadata = getattr(
-                                self._backbone(), "update_cuda_graph_batch_metadata", None
-                            )
-                            if callable(update_metadata):
-                                update_metadata(self.static_batch, cpu_batch)
-                            self._copy_event.record(self._copy_stream)
-                        default_stream.wait_event(self._copy_event)
-                        batch = self.static_batch
+                    incompatibility = self._graph_batch_incompatibility(cpu_batch)
+                    if incompatibility is not None:
+                        raise RuntimeError(
+                            "Synchronous CUDA Graph input validation failed outside "
+                            f"the prefetch path: {incompatibility}"
+                        )
+                    self._copy_stream.wait_stream(default_stream)
+                    with torch.cuda.stream(self._copy_stream):
+                        _copy_static(self.static_batch, cpu_batch)
+                        update_metadata = getattr(
+                            self._backbone(), "update_cuda_graph_batch_metadata", None
+                        )
+                        if callable(update_metadata):
+                            update_metadata(self.static_batch, cpu_batch)
+                        self._copy_event.record(self._copy_stream)
+                    default_stream.wait_event(self._copy_event)
+                    batch = self.static_batch
                 else:
                     if self.warmup_count >= self.warmup_steps:
                         self.validation_batch = _clone_validation_batch(cpu_batch)
@@ -1694,104 +1839,25 @@ class GrootN1d7FullIterationCudaGraphRunner:
         self._advance_scheduler()
         return {"action_loss": action_loss}, float(self.outputs.grad_norm)
 
-    def _run_eager_fallback_step(self, batch: Any) -> tuple[dict[str, torch.Tensor], float]:
-        """Continue with native inputs while preserving optimizer and scheduler state."""
-        if self.fallback_count == 0:
-            self.fallback_count = 1
-            # No captured work is pending when fallback is selected: the
-            # preceding replay has completed and the incompatible batch was
-            # only inspected on CPU. Release the private graph pools before
-            # running eager, otherwise the action-head forward cannot allocate
-            # its normal activations on a 96-GiB device.
-            torch.cuda.synchronize(self.ctx.device)
-            if self.graph is not None:
-                self.graph.reset()
-            if self._backbone_graph is not None:
-                self._backbone_graph.reset()
-            self.graph = None
-            self._backbone_graph = None
-            self.outputs = None
-            self.static_batch = None
-            self.validation_batch = None
-            self._backbone_static_input = None
-            self._backbone_output = None
-            self._prefetched_action_input = None
-            self._prefetched_gpu_batch = None
-            self._prefetched_cpu_batch = None
-            self._backbone_pending = False
+    def _run_eager_fallback_step(
+        self,
+        batch: Any,
+    ) -> tuple[dict[str, torch.Tensor], float]:
+        """Continue through standard DDP with graph-era optimizer state intact."""
+        self.static_batch = batch
+        prepare = getattr(self._backbone(), "prepare_cuda_graph_batch", None)
+        if callable(prepare):
+            prepare(batch)
+
+        default_stream = torch.cuda.current_stream(self.ctx.device)
+        self.graph_stream.wait_stream(default_stream)
+        with torch.cuda.stream(self.graph_stream):
             self._clear_time_buffer()
             self._clear_noise_buffer()
             self._clear_state_dropout_buffer()
-            self.time_buffer = None
-            self._time_host_buffer = None
-            self._time_prefetch_buffer = None
-            self._time_prefetch_host_buffers = []
-            # Remove pointer-keyed Qwen metadata belonging to the destroyed
-            # static graph tensors. Native eager batches must rebuild their
-            # own visual/attention metadata from their current pointers.
-            backbone = self._backbone()
-            qwen_model = getattr(backbone.model, "model", backbone.model)
-            from loongforge.embodied.model.groot_n1_7.modules import qwen3_backbone
+            outputs = self._iteration_body(set_to_none=True)
+        self._wait_default_stream()
 
-            qwen3_backbone._CUDA_GRAPH_ATTENTION_MASK_METADATA.clear()
-            for owner in (backbone, qwen_model, getattr(backbone, "language_model", None)):
-                if owner is None:
-                    continue
-                for name in tuple(owner.__dict__):
-                    if name.startswith("_loongforge_cuda_graph_"):
-                        owner.__dict__.pop(name, None)
-            torch.cuda.empty_cache()
-            # DDP's reducer/logger was captured with graph-owned CUDA events.
-            # Returning through DDP.forward after replay can make its eager
-            # runtime-stat logger touch those captured events. The model has no
-            # mutable buffers requiring broadcast, so keep the graph-era DDP
-            # buffer policy and bypass only DDP's forward wrapper. Gradients
-            # are reduced explicitly below in a fixed parameter order.
-            if self.ctx.is_main:
-                logger.warning(
-                    "Full-iteration CUDA graph disabled after %d replays; "
-                    "continuing with eager steps and the existing optimizer state.",
-                    self.replay_count,
-                )
-        ddp_model = self.trainer.model
-        saved_logger = getattr(ddp_model, "logger", None)
-        if saved_logger is not None:
-            ddp_model.logger = self._noop_ddp_logger
-        if self._saved_ddp_broadcast_buffers is not None:
-            ddp_model.broadcast_buffers = self._saved_ddp_broadcast_buffers
-        try:
-            prepare = getattr(self._backbone(), "prepare_cuda_graph_batch", None)
-            if callable(prepare):
-                prepare(batch)
-            self._zero_grad(set_to_none=True)
-            loss, _log_losses = self.trainer._train_forward(batch)
-        finally:
-            if saved_logger is not None:
-                ddp_model.logger = saved_logger
-        scaled_loss = loss / self.training_args.gradient_accumulation_steps
-        finite = torch.isfinite(scaled_loss)
-        below_threshold = scaled_loss <= float(self.training_args.loss_spike_threshold)
-        valid = finite & below_threshold
-        torch.where(valid, scaled_loss, torch.zeros_like(scaled_loss)).backward()
-        self._clean_nan_gradients()
-        params = [parameter for parameter in self.raw_model.parameters() if parameter.grad is not None]
-        max_norm = float(self.training_args.clip_grad)
-        if self._fused_optimizer_grad_clip:
-            grad_norm, grad_scale = _compute_grad_norm_and_clip_scale(
-                [parameter.grad for parameter in params], max_norm
-            )
-            self.trainer.optimizer.set_grad_scale(grad_scale)
-        else:
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                params, max_norm if max_norm > 0 else float("inf"), error_if_nonfinite=False
-            )
-        self.trainer.optimizer.step()
-        outputs = _GraphOutputs(
-            action_loss=loss.detach().clone(),
-            grad_norm=grad_norm.detach().clone(),
-            nan_flag=(~finite).to(dtype=torch.int32).clone(),
-            spike_flag=(~valid).to(dtype=torch.int32).clone(),
-        )
         nan_flag = int(outputs.nan_flag.item())
         spike_flag = int(outputs.spike_flag.item())
         self.trainer.nan_iterations += nan_flag
@@ -1814,6 +1880,15 @@ class GrootN1d7FullIterationCudaGraphRunner:
     def close(self) -> None:
         """Release captured graphs, static buffers, and restore DDP settings."""
         if self.graph is None and self._backbone_graph is None:
+            if self.fallback_count and self.ctx.is_main:
+                logger.info(
+                    "Full-iteration CUDA graph summary: warmup_steps=%d, "
+                    "capture_sessions=%d, replays=%d, eager_fallbacks=%d",
+                    self.warmup_count,
+                    self.capture_count,
+                    self.replay_count,
+                    self.fallback_count,
+                )
             if self._saved_ddp_broadcast_buffers is not None:
                 self.trainer.model.broadcast_buffers = self._saved_ddp_broadcast_buffers
                 self._saved_ddp_broadcast_buffers = None
