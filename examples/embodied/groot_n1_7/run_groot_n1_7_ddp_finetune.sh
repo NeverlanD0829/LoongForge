@@ -142,10 +142,10 @@ DISTRIBUTED_TRAINING_ARGS=(
 
 # ── FP8
 FP8_ARGS=(
-    --fp8
-    --fp8-backend te
-    --fp8-te-recipe blockwise
-    --fp8-min-dim 2048
+    # --fp8
+    # --fp8-backend te
+    # --fp8-te-recipe blockwise
+    # --fp8-min-dim 2048
 )
 
 # ── FP8 DDP comm hook
