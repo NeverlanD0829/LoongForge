@@ -13,6 +13,8 @@ variables so the integration does not depend on a particular mount layout:
 ```bash
 export VPP2_ASSETS_ROOT=/path/to/vpp2_assets
 export VPP2_BASE_ROOT=/path/to/video-prediction-policy-2
+# Optional when the 32.8-GB video checkpoint lives outside the asset root.
+export VPP2_VIDEO_CHECKPOINT=$VPP2_ASSETS_ROOT/libero_video_step010000.pt
 ```
 
 Provide these assets below `VPP2_ASSETS_ROOT` before launching a run:
@@ -40,7 +42,10 @@ visible at the path passed as `data.text_embedding_cache_dir`. The cache tag
 must remain `wan21i2v14b480p`; changing it changes the dataset lookup keys.
 
 The typed defaults are in `modeling_configuration_vpp2.py`; override paths in
-the model config rather than editing the package.
+the model config rather than editing the package. The standard launcher uses
+eager (non-meta) construction so DDP can wrap a fully materialized model; its
+checkpoint load is strict. Probe scripts can still request `init_on_meta=True`
+and call `materialize()` explicitly.
 
 ## Launchers
 
@@ -56,8 +61,9 @@ bash examples/embodied/vpp2/run_vpp2_sft_fsdp_finetune.sh
 ```
 
 Useful environment overrides include `GPUS_PER_NODE`, `DATASET_PATH`,
-`OUTPUT_DIR`, `TRAIN_ITERS`, `PER_DEVICE_BATCH_SIZE`, `VPP2_ASSETS_ROOT`, and
-`VPP2_BASE_ROOT`. The canonical
+`OUTPUT_DIR`, `TRAIN_ITERS`, `PER_DEVICE_BATCH_SIZE`, `VPP2_ASSETS_ROOT`,
+`VPP2_DATASET_ROOT`, `VPP2_VIDEO_CHECKPOINT`, and `VPP2_BASE_ROOT`. The
+canonical
 launcher uses AdamW `(0.9, 0.95)`, `lr=1e-4`, 500-step linear warmup followed by
 cosine decay to `1e-6`, BF16, and no-op gradient clipping (`--clip-grad 0.0`),
 matching the effective BASE DeepSpeed configuration.

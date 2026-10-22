@@ -1,10 +1,12 @@
 """P2-1 registration and meta-construction smoke tests."""
 
 import inspect
+from unittest.mock import patch
 
 from loongforge.embodied.model import build_model
 from loongforge.embodied.model.registry import MODEL_REGISTRY
 from loongforge.embodied.model.vpp2.modeling_configuration_vpp2 import VPP2ModelConfig
+from loongforge.embodied.model.vpp2.modeling_vpp2 import VPP2Model
 
 
 def test_vpp2_registry_and_meta_shell():
@@ -31,3 +33,15 @@ def test_vpp2_action_stage_freeze_contract_survives_train_call():
     assert model.proprio_encoder.training is True
     assert sum(parameter.numel() for parameter in model.action_expert.parameters() if parameter.requires_grad) == 929399303
     assert sum(parameter.numel() for parameter in model.proprio_encoder.parameters() if parameter.requires_grad) == 36864
+
+
+def test_vpp2_eager_config_materializes_and_strict_loads_before_wrap():
+    """The DDP launcher must not hand a meta tensor to the generic wrapper."""
+    cfg = VPP2ModelConfig(init_on_meta=False)
+    with patch.object(VPP2Model, "materialize") as materialize, patch.object(
+        VPP2Model, "load_pretrained"
+    ) as load_pretrained:
+        build_model(cfg)
+
+    materialize.assert_called_once()
+    load_pretrained.assert_called_once_with(cfg.video_checkpoint_path, device=materialize.call_args.args[0])

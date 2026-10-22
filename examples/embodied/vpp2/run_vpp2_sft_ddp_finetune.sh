@@ -6,8 +6,18 @@ export LOONGFORGE_PATH="${LOONGFORGE_PATH:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 GPUS_PER_NODE=${GPUS_PER_NODE:-8}
 MASTER_ADDR=${MASTER_ADDR:-localhost}
 MASTER_PORT=${MASTER_PORT:-29529}
-export VPP2_ASSETS_ROOT=${VPP2_ASSETS_ROOT:-${LOONGFORGE_PATH}/vpp2_assets}
-DATASET_PATH=${DATASET_PATH:-$VPP2_ASSETS_ROOT/libero/libero_spatial_no_noops_lerobot,$VPP2_ASSETS_ROOT/libero/libero_object_no_noops_lerobot,$VPP2_ASSETS_ROOT/libero/libero_goal_no_noops_lerobot,$VPP2_ASSETS_ROOT/libero/libero_10_no_noops_lerobot}
+if [[ -z "${VPP2_ASSETS_ROOT:-}" ]]; then
+  if [[ -d /ssd1/vpp2_assets ]]; then
+    export VPP2_ASSETS_ROOT=/ssd1/vpp2_assets
+  else
+    export VPP2_ASSETS_ROOT="$LOONGFORGE_PATH/vpp2_assets"
+  fi
+else
+  export VPP2_ASSETS_ROOT
+fi
+export VPP2_VIDEO_CHECKPOINT=${VPP2_VIDEO_CHECKPOINT:-$VPP2_ASSETS_ROOT/libero_video_step010000.pt}
+export VPP2_DATASET_ROOT=${VPP2_DATASET_ROOT:-$VPP2_ASSETS_ROOT/libero_subset}
+DATASET_PATH=${DATASET_PATH:-$VPP2_DATASET_ROOT/libero_spatial_no_noops_lerobot,$VPP2_DATASET_ROOT/libero_object_no_noops_lerobot,$VPP2_DATASET_ROOT/libero_goal_no_noops_lerobot,$VPP2_DATASET_ROOT/libero_10_no_noops_lerobot}
 OUTPUT_DIR=${OUTPUT_DIR:-"$LOONGFORGE_PATH/outputs/vpp2_ddp"}
 TRAIN_ITERS=${TRAIN_ITERS:-20}
 PER_DEVICE_BATCH_SIZE=${PER_DEVICE_BATCH_SIZE:-1}

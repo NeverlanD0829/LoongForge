@@ -50,7 +50,11 @@ class VPP2Model(LiberoActionModel):
         if not isinstance(cfg, VPP2ModelConfig):
             raise TypeError(f"VPP2Model.from_pretrained expects VPP2ModelConfig, got {type(cfg).__name__}")
         compute_dtype = _dtype(cfg.dtype)
-        device = torch.device("meta" if cfg.init_on_meta else ("cuda" if torch.cuda.is_available() else "cpu"))
+        # Always construct the large tower on meta.  The eager training mode
+        # below materializes it in the configured dtype before loading; direct
+        # CUDA construction would allocate the default fp32 parameters first
+        # and OOM while the video checkpoint is staged.
+        device = torch.device("meta")
         video_cfg = dict(cfg.video_dit_config)
         action_cfg = dict(cfg.action_dit_config)
         video_cfg["action_dim"] = cfg.action_dim
@@ -99,6 +103,22 @@ class VPP2Model(LiberoActionModel):
             "video_dit": cfg.video_checkpoint_path,
             "action_dit_backbone": cfg.action_dit_pretrained_path,
         }
+        if not cfg.init_on_meta:
+            # The generic embodied trainer wraps a regular DDP model before its
+            # deferred-meta materialization hook.  Eager VPP2 construction must
+            # therefore load the complete strict bundle before that wrapper.
+            target = (
+                torch.device("cuda", torch.cuda.current_device())
+                if torch.cuda.is_available()
+                else torch.device("cpu")
+            )
+            model.materialize(target, cfg.dtype)
+            model.load_pretrained(cfg.video_checkpoint_path, device=target)
+            logger.info(
+                "VPP2 eager strict bundle loaded: video=%s action=%s",
+                cfg.video_checkpoint_path,
+                cfg.action_dit_pretrained_path,
+            )
         model.freeze_modules()
         return model
 
