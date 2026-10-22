@@ -145,8 +145,8 @@ tools_path = os.path.join(project_root, "tools")
 if tools_path not in sys.path:
     sys.path.insert(0, tools_path)
 
-from dist_checkpoint.checkpoint.hf_checkpoint_loader import load_hf_checkpoint_online
-from dist_checkpoint.checkpoint.hf_checkpoint_saver import save_hf_checkpoint_online
+from mcore_bridge.checkpoint.hf_checkpoint_loader import load_hf_checkpoint_online
+from mcore_bridge.checkpoint.hf_checkpoint_saver import save_hf_checkpoint_online
 
 try:
     from inspector.hooks import register_hooks
@@ -791,8 +791,6 @@ def get_model(
         if is_hf_checkpoint(args.pretrained_checkpoint):
             # HF checkpoint: use online loading
             print_rank_0(f"Loading base model weights from HF chekckpoint: {args.pretrained_checkpoint}")
-
-            from tools.dist_checkpoint.checkpoint.hf_checkpoint_loader import load_hf_checkpoint_online
 
             # Temporarily set args.load for load_hf_checkpoint_online
             orig_load = args.load
@@ -1692,11 +1690,14 @@ def train_step(
         tmp_num_microbatches = get_num_microbatches()
         tmp_seq_length = args.seq_length
         if args.enable_chunkpipe:
-            tmp_seq_length = args.chunksize
+            # P2P/activation shape hint: largest chunk. Uniform mode: == chunksize.
+            # (True variable-length P2P across PP additionally needs
+            # config.variable_seq_lengths.)
+            tmp_seq_length = getattr(args, "max_chunk_size", 0) or args.chunksize
             if args.training_phase != "sft":
                 # Pretrain: DataLoader produces full sequences, ChunkDataIterator
                 # splits them, so num_microbatches must be inflated.
-                num_chunks = args.seq_length // args.chunksize
+                num_chunks = args.chunk_num_per_seq
                 tmp_num_microbatches *= num_chunks
             # SFT: DataLoader already produces chunk-level micro-batches,
             # num_microbatches is already correct.

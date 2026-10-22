@@ -6,6 +6,14 @@
 - **Extensive open-source model support** — Pi0.5, GR00T-N1.6 / N1.7, xVLA, Wall-OSS-0.5, LingBot-VA, FastWAM, DreamZero, Cosmos3, and more — each supports fine-tuning, with accuracy aligned to the official baselines.
 - **High training throughput** — up to 2x+ throughput on representative models through `torch.compile`, CUDA Graph, custom kernels, and I/O optimization, plus a full range of distributed strategies: DDP, ZeRO-1, FSDP, and HSDP.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)"  srcset="../../docs/assets/images/architecture/loongforge-embodied-architecture-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="../../docs/assets/images/architecture/loongforge-embodied-architecture.svg">
+    <img alt="LoongForge-Embodied architecture: an integrated data pipeline, accelerated model training with an extensible model registry, acceleration toolkit and distributed training, and integrated evaluation" src="../../docs/assets/images/architecture/loongforge-embodied-architecture.svg" width="100%">
+  </picture>
+</p>
+
 ---
 
 ## Why a Separate Subsystem?
@@ -39,10 +47,10 @@ Training speedups over mainstream open-source baselines. Performance is still un
 |---|---|---|
 | DreamZero (DROID Wan2.2-5B Full) | WAM | **4.38×** |
 | Pi0.5 | VLA | **2.80×** |
+| FastWAM | WAM | **2.61×** |
 | GR00T-N1.6 | VLA | **2.31×** |
-| FastWAM | WAM | **2.25×** |
 | LingBot-VA | WAM | **2.20×** |
-| GR00T-N1.7 | VLA | **1.79×** |
+| GR00T-N1.7 | VLA | **1.85×** |
 | xVLA | VLA | **1.79×** |
 
 Numbers reflect the baseline and LoongForge versions at measurement time and may evolve as implementations change. See the [root README](../../README.md#-performance) for the full benchmark chart across all model families.
@@ -78,8 +86,7 @@ loongforge/embodied/
 │   ├── parallel.py                         # wrap_model() with DDP / FSDP
 │   └── checkpoint.py                       # safetensors / pt / dcp save & load
 ├── optimizer/                              # AdamW, LR schedulers, grad clipping / NaN cleanup
-├── eval/                                   # Offline benchmark eval (see eval/README.md)
-└── tools/                                  # helper tools, e.g. dcp_to_safetensors.py
+└── eval/                                   # Offline benchmark eval (see eval/README.md)
 ```
 
 ---

@@ -454,10 +454,22 @@ class LeRobotV2Dataset(Dataset):
         return torch.from_numpy(frame).permute(2, 0, 1).float() / 255.0
 
     def _decode_video_frames(self, video_key: str, episode_index: int, frame_indices: List[int]) -> torch.Tensor:
-        """Decode multiple video frames. Returns tensor [T, C, H, W] float32 in [0, 1]."""
-        frames = [self._decode_video_frame(video_key, episode_index, fi) for fi in frame_indices]
-        result = torch.stack(frames, dim=0)  # [T, C, H, W]
-        return result
+        """Decode multiple video frames. Returns tensor [T, C, H, W] float32 in [0, 1].
+
+        Decodes all requested frames in a single container open via the batched
+        backend API (one seek + one sequential pass), instead of re-opening the
+        container once per frame.
+        """
+        episode_chunk = episode_index // self.chunks_size
+        video_path = self.root / self._video_path_tpl.format(
+            episode_chunk=episode_chunk, video_key=video_key, episode_index=episode_index,
+        )
+
+        from loongforge.embodied.data.datasets.video_backends import decode_video_frames_by_timestamps
+        frames = decode_video_frames_by_timestamps(  # [T, H, W, C] uint8
+            str(video_path), [fi / self.fps for fi in frame_indices], backend=self.video_backend,
+        )
+        return torch.from_numpy(frames).permute(0, 3, 1, 2).float() / 255.0  # -> [T, C, H, W]
 
     def __len__(self) -> int:
         return len(self._step_index)
@@ -488,6 +500,17 @@ class LeRobotV2Dataset(Dataset):
                     sample[out_key] = self._decode_video_frame(vkey, episode_index, step_idx)
             else:
                 sample[out_key] = self._decode_video_frame(vkey, episode_index, step_idx)
+
+        # Image padding mask: mark observation frames whose requested index fell
+        # outside the episode. In the multi-frame branch above such indices are
+        # clamped to the last valid frame (i.e. duplicated), so they must be
+        # excluded from the video loss.
+        if self._observation_delta_indices:
+            sample["image_is_pad"] = torch.tensor(
+                [(step_idx + d) < 0 or (step_idx + d) > (ep_len - 1)
+                 for d in self._observation_delta_indices],
+                dtype=torch.bool,
+            )
 
         # State
         if self._state_key in ep_data.columns:
@@ -530,6 +553,106 @@ class LeRobotV2Dataset(Dataset):
             sample = self._transform(sample)
 
         return sample
+
+
+class MultiLeRobotV2Dataset(Dataset):
+    """Concatenation of multiple :class:`LeRobotV2Dataset` (v2.0/v2.1) datasets.
+
+    Each underlying dataset keeps its own ``task_index`` -> task text mapping, so
+    task text resolves correctly per sub-dataset after concatenation (same
+    semantics as the FastWAM standalone ``MultiLeRobotDataset``). ``__len__`` is
+    the total frame count across all sub-datasets, so a uniform sampler yields
+    frame-count-weighted sampling across suites.
+    """
+
+    def __init__(
+        self,
+        roots: List[str | Path],
+        action_horizon: int = 50,
+        episodes: Optional[List[int]] = None,
+        video_backend: str = "torchcodec",
+        transform: Optional[Callable] = None,
+        observation_delta_indices: Optional[List[int]] = None,
+    ):
+        if not roots:
+            # An empty list would build a zero-length dataset: the sampler yields
+            # nothing and training silently does no work. Fail loudly here so every
+            # caller is protected, rather than relying on each one to validate.
+            raise ValueError(
+                "MultiLeRobotV2Dataset requires at least one dataset root "
+                "(got an empty list)."
+            )
+        self._datasets = [
+            LeRobotV2Dataset(
+                root=root,
+                action_horizon=action_horizon,
+                episodes=episodes,
+                video_backend=video_backend,
+                transform=transform,
+                observation_delta_indices=observation_delta_indices,
+            )
+            for root in roots
+        ]
+        self._offsets: List[int] = []
+        total = 0
+        for ds in self._datasets:
+            self._offsets.append(total)
+            total += len(ds)
+        self._total = total
+        self._stats: Optional[Dict] = None
+        self._video_keys = self._datasets[0]._video_keys if self._datasets else []
+
+    def __len__(self) -> int:
+        return self._total
+
+    def __getitem__(self, index: int) -> Dict[str, Any]:
+        # Locate the sub-dataset containing ``index`` by bisecting on the offsets.
+        lo, hi = 0, len(self._datasets)
+        while lo + 1 < hi:
+            mid = (lo + hi) // 2
+            if self._offsets[mid] <= index:
+                lo = mid
+            else:
+                hi = mid
+        return self._datasets[lo][index - self._offsets[lo]]
+
+    @property
+    def _transform(self):
+        return self._datasets[0]._transform if self._datasets else None
+
+    @_transform.setter
+    def _transform(self, transform: Optional[Callable]):
+        # dataloader.py sets dataset._transform; propagate to every sub-dataset.
+        for ds in self._datasets:
+            ds._transform = transform
+
+    @property
+    def meta(self):
+        """Compatibility shim for stats access (matches LeRobotV2Dataset)."""
+        class _Meta:
+            pass
+        m = _Meta()
+        m.stats = self.stats
+        m.camera_keys = self._video_keys
+        return m
+
+    @property
+    def stats(self) -> Dict:
+        """Aggregate per-suite stats (weighted by frame count) across sub-datasets."""
+        if self._stats is None:
+            per_suite = []
+            for ds in self._datasets:
+                raw = ds.stats
+                per_suite.append(
+                    {k: {sk: sv.numpy() if torch.is_tensor(sv) else sv for sk, sv in v.items()}
+                     for k, v in raw.items()}
+                )
+            agg = aggregate_stats(per_suite)
+            self._stats = {
+                k: {sk: torch.as_tensor(sv) for sk, sv in v.items()}
+                for k, v in agg.items()
+            }
+        return self._stats
 
 
 class StreamingLeRobotV3Dataset(StreamingLeRobotDataset):
