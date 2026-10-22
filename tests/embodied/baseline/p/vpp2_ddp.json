@@ -1,0 +1,224 @@
+{
+  "train": [
+    {
+      "iteration": 1,
+      "elapsed_time_ms": 2964.682429097593,
+      "video_loss": 0.0,
+      "action_loss": 1.4081971645355225,
+      "learning_rate": 1.0249307479224376e-05,
+      "throughput": 0.3373042556549255,
+      "grad_norm": 4.5625,
+      "nan_iterations": 0.0,
+      "skipped_iterations": 0.0
+    },
+    {
+      "iteration": 2,
+      "elapsed_time_ms": 1135.9820580109954,
+      "video_loss": 0.0,
+      "action_loss": 2.564157247543335,
+      "learning_rate": 1.523545706371191e-05,
+      "throughput": 0.8802955935333274,
+      "grad_norm": 9.125,
+      "nan_iterations": 0.0,
+      "skipped_iterations": 0.0
+    },
+    {
+      "iteration": 3,
+      "elapsed_time_ms": 737.1082322206348,
+      "video_loss": 0.0,
+      "action_loss": 2.6671462059020996,
+      "learning_rate": 2.0221606648199443e-05,
+      "throughput": 1.356652871705651,
+      "grad_norm": 8.5,
+      "nan_iterations": 0.0,
+      "skipped_iterations": 0.0
+    },
+    {
+      "iteration": 4,
+      "elapsed_time_ms": 736.2395320087671,
+      "video_loss": 0.0,
+      "action_loss": 2.4834094047546387,
+      "learning_rate": 2.520775623268698e-05,
+      "throughput": 1.3582536070449582,
+      "grad_norm": 8.125,
+      "nan_iterations": 0.0,
+      "skipped_iterations": 0.0
+    },
+    {
+      "iteration": 5,
+      "elapsed_time_ms": 740.3663999866694,
+      "video_loss": 0.0,
+      "action_loss": 1.8688359260559082,
+      "learning_rate": 3.0193905817174513e-05,
+      "throughput": 1.350682580973428,
+      "grad_norm": 6.46875,
+      "nan_iterations": 0.0,
+      "skipped_iterations": 0.0
+    },
+    {
+      "iteration": 6,
+      "elapsed_time_ms": 737.5733989756554,
+      "video_loss": 0.0,
+      "action_loss": 1.8897161483764648,
+      "learning_rate": 3.5180055401662043e-05,
+      "throughput": 1.3557972689752689,
+      "grad_norm": 7.96875,
+      "nan_iterations": 0.0,
+      "skipped_iterations": 0.0
+    },
+    {
+      "iteration": 7,
+      "elapsed_time_ms": 736.7392401210964,
+      "video_loss": 0.0,
+      "action_loss": 2.3963396549224854,
+      "learning_rate": 4.016620498614958e-05,
+      "throughput": 1.357332344393156,
+      "grad_norm": 8.3125,
+      "nan_iterations": 0.0,
+      "skipped_iterations": 0.0
+    },
+    {
+      "iteration": 8,
+      "elapsed_time_ms": 737.6775369048119,
+      "video_loss": 0.0,
+      "action_loss": 2.257901191711426,
+      "learning_rate": 4.515235457063711e-05,
+      "throughput": 1.3556058710908498,
+      "grad_norm": 9.75,
+      "nan_iterations": 0.0,
+      "skipped_iterations": 0.0
+    },
+    {
+      "iteration": 9,
+      "elapsed_time_ms": 738.1209500599653,
+      "video_loss": 0.0,
+      "action_loss": 0.5946787595748901,
+      "learning_rate": 5.0138504155124644e-05,
+      "throughput": 1.3547915147493912,
+      "grad_norm": 2.4375,
+      "nan_iterations": 0.0,
+      "skipped_iterations": 0.0
+    },
+    {
+      "iteration": 10,
+      "elapsed_time_ms": 737.9461880773306,
+      "video_loss": 0.0,
+      "action_loss": 0.7570337653160095,
+      "learning_rate": 5.512465373961218e-05,
+      "throughput": 1.3551123593516121,
+      "grad_norm": 3.84375,
+      "nan_iterations": 0.0,
+      "skipped_iterations": 0.0
+    },
+    {
+      "iteration": 11,
+      "elapsed_time_ms": 736.6317501291633,
+      "video_loss": 0.0,
+      "action_loss": 0.38608917593955994,
+      "learning_rate": 6.011080332409971e-05,
+      "throughput": 1.3575304075946455,
+      "grad_norm": 1.828125,
+      "nan_iterations": 0.0,
+      "skipped_iterations": 0.0
+    },
+    {
+      "iteration": 12,
+      "elapsed_time_ms": 735.3977770544589,
+      "video_loss": 0.0,
+      "action_loss": 1.2963875532150269,
+      "learning_rate": 6.509695290858724e-05,
+      "throughput": 1.3598082985855238,
+      "grad_norm": 5.9375,
+      "nan_iterations": 0.0,
+      "skipped_iterations": 0.0
+    },
+    {
+      "iteration": 13,
+      "elapsed_time_ms": 735.666312975809,
+      "video_loss": 0.0,
+      "action_loss": 0.21339663863182068,
+      "learning_rate": 7.008310249307476e-05,
+      "throughput": 1.359311935808162,
+      "grad_norm": 1.03125,
+      "nan_iterations": 0.0,
+      "skipped_iterations": 0.0
+    },
+    {
+      "iteration": 14,
+      "elapsed_time_ms": 738.873623078689,
+      "video_loss": 0.0,
+      "action_loss": 1.4507113695144653,
+      "learning_rate": 7.50692520775623e-05,
+      "throughput": 1.3534114207965189,
+      "grad_norm": 5.21875,
+      "nan_iterations": 0.0,
+      "skipped_iterations": 0.0
+    },
+    {
+      "iteration": 15,
+      "elapsed_time_ms": 737.7066949848086,
+      "video_loss": 0.0,
+      "action_loss": 0.058307234197854996,
+      "learning_rate": 8.005540166204983e-05,
+      "throughput": 1.3555522903592365,
+      "grad_norm": 0.369140625,
+      "nan_iterations": 0.0,
+      "skipped_iterations": 0.0
+    },
+    {
+      "iteration": 16,
+      "elapsed_time_ms": 739.6008088253438,
+      "video_loss": 0.0,
+      "action_loss": 0.9534350633621216,
+      "learning_rate": 8.504155124653736e-05,
+      "throughput": 1.3520807279649003,
+      "grad_norm": 4.3125,
+      "nan_iterations": 0.0,
+      "skipped_iterations": 0.0
+    },
+    {
+      "iteration": 17,
+      "elapsed_time_ms": 736.3791230600327,
+      "video_loss": 0.0,
+      "action_loss": 0.19834201037883759,
+      "learning_rate": 9.00277008310249e-05,
+      "throughput": 1.3579961309121413,
+      "grad_norm": 1.828125,
+      "nan_iterations": 0.0,
+      "skipped_iterations": 0.0
+    },
+    {
+      "iteration": 18,
+      "elapsed_time_ms": 736.5735620260239,
+      "video_loss": 0.0,
+      "action_loss": 1.4746387004852295,
+      "learning_rate": 9.501385041551243e-05,
+      "throughput": 1.3576376502699794,
+      "grad_norm": 8.0,
+      "nan_iterations": 0.0,
+      "skipped_iterations": 0.0
+    },
+    {
+      "iteration": 19,
+      "elapsed_time_ms": 735.3815229143947,
+      "video_loss": 0.0,
+      "action_loss": 0.20308777689933777,
+      "learning_rate": 0.0001,
+      "throughput": 1.359838354432532,
+      "grad_norm": 1.2734375,
+      "nan_iterations": 0.0,
+      "skipped_iterations": 0.0
+    },
+    {
+      "iteration": 20,
+      "elapsed_time_ms": 746.7422350309789,
+      "video_loss": 0.0,
+      "action_loss": 0.006569787859916687,
+      "learning_rate": 1e-06,
+      "throughput": 1.3391501820685348,
+      "grad_norm": 0.039794921875,
+      "nan_iterations": 0.0,
+      "skipped_iterations": 0.0
+    }
+  ]
+}

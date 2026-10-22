@@ -62,7 +62,8 @@ bash examples/embodied/vpp2/run_vpp2_sft_fsdp_finetune.sh
 
 Useful environment overrides include `GPUS_PER_NODE`, `DATASET_PATH`,
 `OUTPUT_DIR`, `TRAIN_ITERS`, `PER_DEVICE_BATCH_SIZE`, `VPP2_ASSETS_ROOT`,
-`VPP2_DATASET_ROOT`, `VPP2_VIDEO_CHECKPOINT`, and `VPP2_BASE_ROOT`. The
+`VPP2_DATASET_ROOT`, `VPP2_VIDEO_CHECKPOINT`, `SAVE_INTERVAL`, and
+`VPP2_BASE_ROOT`. Set `SAVE_INTERVAL=0` for a metrics-only CI smoke run. The
 canonical
 launcher uses AdamW `(0.9, 0.95)`, `lr=1e-4`, 500-step linear warmup followed by
 cosine decay to `1e-6`, BF16, and no-op gradient clipping (`--clip-grad 0.0`),
