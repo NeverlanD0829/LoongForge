@@ -1,3 +1,5 @@
+# Copyright 2026 The LoongForge Authors.
+# SPDX-License-Identifier: Apache-2.0
 """Typed configuration for the VPP2 LIBERO action-stage model."""
 
 from __future__ import annotations

@@ -5,6 +5,12 @@ Wan2.1-I2V-14B video DiT, a trainable action DiT, and MoT mixed attention.
 The numerical modules are kept under this package so the model registry and
 embodied trainer can load them without changing the BASE repository.
 
+The numerical implementation is adapted from
+[`video-prediction-policy-2`](https://github.com/Haodong082399/video-prediction-policy-2),
+whose extracted project code is MIT-licensed by the FastWAM Authors. Its Wan
+components also retain the Wan2.1 and DiffSynth Apache-2.0 lineage. See
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the retained notices.
+
 ## Assets
 
 Set the two roots used by the examples first. They are deliberately environment
@@ -67,18 +73,24 @@ Useful environment overrides include `GPUS_PER_NODE`, `DATASET_PATH`,
 canonical
 launcher uses AdamW `(0.9, 0.95)`, `lr=1e-4`, 500-step linear warmup followed by
 cosine decay to `1e-6`, BF16, and no-op gradient clipping (`--clip-grad 0.0`),
-matching the effective BASE DeepSpeed configuration.
+for the LoongForge integration/regression recipe.
 
 ## Parity notes and known deviations
 
 - BASE uses Accelerate + DeepSpeed ZeRO-2; embodied LoongForge has no equivalent
-  ZeRO-2 backend, so the primary recipe is DDP + ZeRO-1 + FP32 master params.
+  ZeRO-2 backend. The primary recipe is plain PyTorch DDP over NCCL; the
+  separate `ddp_zero1` launcher enables LoongForge's sharded optimizer and FP32
+  master parameters.
 - Fixed-batch forward, activation, eval, and step-0 gradient probes match the
   pinned BASE exactly. Long optimizer curves show a small cross-engine BF16
   trajectory drift; see the task evidence under `/workspace/vpp2_port/evidence`.
 - A literal batch of 32 on one 80-GiB card OOMs while building the video KV
   cache. The parity probes therefore use identical microbatch-4 partitions;
-  canonical training remains an 8-GPU, per-GPU batch-32 recipe.
+  the checked-in smoke/regression launcher defaults to 8 GPUs, per-GPU batch 1,
+  and gradient accumulation 1 (global batch 8). The upstream LIBERO action demo
+  uses per-GPU batch 32 on 8 GPUs (reference global batch 256), so the default
+  LoongForge launcher is an integration/regression recipe rather than a claim of
+  full upstream training-recipe equivalence.
 - The VPP2 activation probe is default-off. Set `VPP2_VPROBE=1` only in an
   evidence probe; production launches do not install hooks.
 

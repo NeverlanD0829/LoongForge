@@ -1,3 +1,5 @@
+# Copyright 2026 The LoongForge Authors.
+# SPDX-License-Identifier: Apache-2.0
 """LoongForge registry wrapper around the pinned VPP2 numerical modules."""
 
 from __future__ import annotations

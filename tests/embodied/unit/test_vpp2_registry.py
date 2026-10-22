@@ -1,3 +1,5 @@
+# Copyright 2026 The LoongForge Authors.
+# SPDX-License-Identifier: Apache-2.0
 """P2-1 registration and meta-construction smoke tests."""
 
 import inspect

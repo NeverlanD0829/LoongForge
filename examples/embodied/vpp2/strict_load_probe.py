@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 The LoongForge Authors.
+# SPDX-License-Identifier: Apache-2.0
 """Strict P2-2 VPP2 checkpoint and auxiliary-precision probe.
 
 This intentionally exercises the same ``build meta -> materialize -> strict

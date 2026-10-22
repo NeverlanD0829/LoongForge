@@ -1,3 +1,5 @@
+# Copyright 2026 The LoongForge Authors.
+# SPDX-License-Identifier: Apache-2.0
 # See LICENSE and THIRD_PARTY_NOTICES.md for retained source notices.
 from contextlib import contextmanager, nullcontext
 from typing import Any, Optional, Sequence, Union

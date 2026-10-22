@@ -1,3 +1,5 @@
+# Copyright 2026 The LoongForge Authors.
+# SPDX-License-Identifier: Apache-2.0
 """Read historical VPP2 action checkpoints without importing BASE packages."""
 
 ACTION_FORMAT = "vpp2_wan21_action_v1"
