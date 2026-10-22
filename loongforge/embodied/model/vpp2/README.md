@@ -56,7 +56,7 @@ and call `materialize()` explicitly.
 ## Launchers
 
 ```bash
-# canonical DDP smoke/finetune recipe
+# canonical LoongForge DDP regression recipe (100 steps by default)
 bash examples/embodied/vpp2/run_vpp2_sft_ddp_finetune.sh
 
 # closest optimizer-state approximation to BASE ZeRO-2
@@ -91,6 +91,8 @@ for the LoongForge integration/regression recipe.
   uses per-GPU batch 32 on 8 GPUs (reference global batch 256), so the default
   LoongForge launcher is an integration/regression recipe rather than a claim of
   full upstream training-recipe equivalence.
+- VPP2 regression acceptance uses the first 100 aligned optimizer steps and
+  requires action-loss MAE <= 0.001.
 - The VPP2 activation probe is default-off. Set `VPP2_VPROBE=1` only in an
   evidence probe; production launches do not install hooks.
 
