@@ -9,7 +9,6 @@ from typing import Any
 
 import torch
 from accelerate import init_on_device
-from torch import nn
 
 from loongforge.embodied.model.registry import register_model
 
@@ -19,7 +18,6 @@ from .modules.helpers.io import load_state_dict
 from .modules.helpers.loader import _convert_vae_state_dict, _load_state_dict_assign
 from .modules.libero_action_model import LiberoActionModel
 from .modules.mot import MoT
-from .modules.vpp2 import VPP2
 from .modules.wan_video_clip import WanImageEncoderCLIP
 from .modules.wan_video_dit import WanVideoDiT
 from .modules.wan_video_vae import WanVideoVAE
