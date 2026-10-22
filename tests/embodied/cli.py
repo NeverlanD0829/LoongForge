@@ -84,8 +84,6 @@ DEFAULT_LOG_ROOT = os.environ.get(
 
 _MODEL_LOSS_MAE_TOLERANCES = {
     "vpp2_ddp": 0.001,
-    "vpp2_ddp_zero1": 0.001,
-    "vpp2_fsdp": 0.001,
 }
 
 
