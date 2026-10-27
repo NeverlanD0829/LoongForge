@@ -360,6 +360,10 @@ class VPP2Model(LiberoActionModel):
                     f"unexpected={clip_result.unexpected_keys}"
                 )
         self.freeze_modules()
+        if self.config.alignment_init_path:
+            from .alignment import load_alignment_init
+
+            load_alignment_init(self, self.config.alignment_init_path)
         return {
             "video": {
                 "path": str(video_path),
@@ -401,3 +405,22 @@ class VPP2Model(LiberoActionModel):
         video_loss = video_loss if torch.is_tensor(video_loss) else torch.tensor(float(video_loss), device=device)
         action_loss = action_loss if torch.is_tensor(action_loss) else torch.tensor(float(action_loss), device=device)
         return loss, {"video_loss": video_loss.detach(), "action_loss": action_loss.detach()}
+
+    def on_after_data_iterators_initialized(self, *, args, ctx, optimizer=None, **kwargs):
+        """Apply VPP2 optimizer policy and optional comparison RNG after setup."""
+        if optimizer is not None and args.optimizer == "AdamW":
+            # The reference uses scalar AdamW. Keep this recipe local instead
+            # of forcing every DeepSpeed model to use VPP2's optimizer policy.
+            for group in optimizer.param_groups:
+                group["foreach"] = False
+        if self.config.alignment_seed is not None and not args.resume:
+            import json
+
+            from .alignment import parameter_fingerprint, seed_training
+
+            if ctx.is_main:
+                output = Path(args.output_dir)
+                (output / "initial_trainable.json").write_text(
+                    json.dumps(parameter_fingerprint(self), indent=2), encoding="utf-8"
+                )
+            seed_training(self.config.alignment_seed, ctx.rank)

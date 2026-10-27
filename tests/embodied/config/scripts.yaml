@@ -28,6 +28,7 @@ fastwam_ddp_zero1:                 fastwam/run_fastwam_sft_ddp_zero1_finetune.sh
 # --- vpp2 ---
 # VPP2 DDP uses the model-specific 100-step, 0.001 loss-MAE gate in cli.py.
 vpp2_ddp:                           vpp2/run_vpp2_sft_ddp_finetune.sh
+vpp2_deepspeed_zero2:               vpp2/run_vpp2_sft_deepspeed_zero2_finetune.sh
 vpp2_ddp_zero1:                     vpp2/run_vpp2_sft_ddp_zero1_finetune.sh
 vpp2_fsdp:                           vpp2/run_vpp2_sft_fsdp_finetune.sh
 

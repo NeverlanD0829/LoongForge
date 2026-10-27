@@ -56,6 +56,9 @@ and call `materialize()` explicitly.
 ## Launchers
 
 ```bash
+# upstream-aligned LIBERO recipe: DeepSpeed ZeRO-2, 8 x batch 32
+bash examples/embodied/vpp2/run_vpp2_sft_deepspeed_zero2_finetune.sh
+
 # canonical LoongForge DDP regression recipe (100 steps by default)
 bash examples/embodied/vpp2/run_vpp2_sft_ddp_finetune.sh
 
@@ -66,36 +69,73 @@ bash examples/embodied/vpp2/run_vpp2_sft_ddp_zero1_finetune.sh
 bash examples/embodied/vpp2/run_vpp2_sft_fsdp_finetune.sh
 ```
 
-Useful environment overrides include `GPUS_PER_NODE`, `DATASET_PATH`,
-`OUTPUT_DIR`, `TRAIN_ITERS`, `PER_DEVICE_BATCH_SIZE`, `VPP2_ASSETS_ROOT`,
-`VPP2_DATASET_ROOT`, `VPP2_VIDEO_CHECKPOINT`, `SAVE_INTERVAL`, and
-`VPP2_BASE_ROOT`. Set `SAVE_INTERVAL=0` for a metrics-only CI smoke run. The
-canonical
-launcher uses AdamW `(0.9, 0.95)`, `lr=1e-4`, 500-step linear warmup followed by
-cosine decay to `1e-6`, BF16, and no-op gradient clipping (`--clip-grad 0.0`),
-for the LoongForge integration/regression recipe.
+Useful environment overrides include GPUS_PER_NODE, DATASET_PATH, OUTPUT_DIR,
+TRAIN_ITERS, PER_DEVICE_BATCH_SIZE, VPP2_ASSETS_ROOT, VPP2_DATASET_ROOT,
+VPP2_VIDEO_CHECKPOINT, SAVE_INTERVAL and VPP2_BASE_ROOT. DeepSpeed additionally
+accepts GRADIENT_ACCUMULATION_STEPS, NUM_WORKERS and DEEPSPEED_CONFIG (default:
+examples/embodied/vpp2/zero2_bf16.json). SAVE_INTERVAL=0 disables saves.
+
+The native launcher preserves the complete logical batch: there is no internal
+batch chunking or public batch_weight trainer API. It uses AdamW (0.9,0.95),
+foreach=False (configured by VPP2's existing model hook), lr1e-4, warmup500,
+schedule30000, BF16 and --clip-grad 0. DDP/FSDP alternatives are not the same
+engine as the upstream ZeRO-2 recipe.
+
+Use a separate reproduction environment pinned by
+examples/embodied/vpp2/requirements-repro.txt on both sides. VPP2 does not
+upgrade the project's global DeepSpeed dependency. The new backend was tested
+with 0.18.9; its version guard is a conservative compatibility boundary, not a
+claim of testing every older or newer version.
 
 ## Parity notes and known deviations
 
-- BASE uses Accelerate + DeepSpeed ZeRO-2; embodied LoongForge has no equivalent
-  ZeRO-2 backend. The primary recipe is plain PyTorch DDP over NCCL; the
-  separate `ddp_zero1` launcher enables LoongForge's sharded optimizer and FP32
-  master parameters.
-- Fixed-batch forward, activation, eval, and step-0 gradient probes match the
-  pinned BASE exactly. Long optimizer curves show a small cross-engine BF16
-  trajectory drift; see the task evidence under `/workspace/vpp2_port/evidence`.
-- A literal batch of 32 on one 80-GiB card OOMs while building the video KV
-  cache. The parity probes therefore use identical microbatch-4 partitions;
-  the checked-in smoke/regression launcher defaults to 8 GPUs, per-GPU batch 1,
-  and gradient accumulation 1 (global batch 8). The upstream LIBERO action demo
-  uses per-GPU batch 32 on 8 GPUs (reference global batch 256), so the default
-  LoongForge launcher is an integration/regression recipe rather than a claim of
-  full upstream training-recipe equivalence.
-- VPP2 regression acceptance uses the first 100 aligned optimizer steps and
-  requires action-loss MAE <= 0.001.
+- Native ZeRO-2 targets world8 x batch32, GA1. Whole-batch training can require
+  more memory than available; resource failures are BLOCKED, not silently
+  replaced by chunked training. Actual native full14B acceptance is pending.
+- A separate full14B diagnostic retains all layers, real VAE/CLIP/data but
+  uses B1 model parallelism and CPU FP32-master AdamW. Its equality does not
+  certify the native public trainers or the original ZeRO-2 recipe.
+- Loss MAE <=0.001 is only a short-run comparison gate, not convergence or
+  task-success acceptance. Old DDP baselines do not certify ZeRO-2.
+- The VPP2 sampler matches Accelerate's round-robin assignment of complete
+  batches. It pads an incomplete global batch from the start of the epoch, or
+  drops the incomplete global batch with `--batch-drop-last`, so all ranks
+  execute the same number of backwards. Sampler state includes both epoch and
+  the consumed sample count for StatefulDataLoader resume. Older epoch-only
+  VPP2 sampler snapshots are rejected because they cannot restore this position.
+- DeepSpeed checkpoints include the full model (including frozen weights),
+  optimizer partitions, scheduler, per-rank RNG, and per-rank loader state.
+  All ranks save synchronously; `resume_meta.json` is published after the
+  complete save. Resume requires the original world size. Full VPP2 checkpoint
+  files are large; `SAVE_INTERVAL=0` disables saving for precision runs.
 - The VPP2 activation probe is default-off. Set `VPP2_VPROBE=1` only in an
   evidence probe; production launches do not install hooks.
 
 The BASE repository is read-only for this port. Checkpoint loading is strict:
 missing or unexpected tensors are errors, and VAE/CLIP are pinned to FP32/FP16
 and eval/frozen respectively.
+
+## Framework-scope cleanup (2026-10-27)
+
+The VPP2-specific batch splitter, common batch_weight API, LingBot changes,
+recursive unwrap, packed common loss reduction, LR fallback and project-wide
+DeepSpeed version bump have been removed. Only the explicitly selected native
+DeepSpeed backend lifecycle and its parameter validation remain in public code.
+
+Reproduction launchers use shared six-projection initialization, post-setup
+training RNG, private dataloader RNG, no extra autocast and schedule30000.
+Upstream tracked sources are unchanged; its launcher now inherits the original
+LiberoTrainer.train() loop instead of implementing chunked updates.
+The default local dataset has four episodes/579 frames, not the full paper data.
+See alignment/refactor_20261027_1945/ in the repositories' parent for fresh
+runs, failures and the current acceptance boundary. Do not reuse historical
+results as validation of this cleanup.
+
+Fresh cleanup verification: full14B B1 model-parallel/CPU-master AdamW diagnostic
+completed 100 steps per side with exact losses, gradient norms/LR, first/last
+gradients and final trainable tensors; frozen tensors unchanged. Native two-GPU
+BF16 ZeRO2 tiny2-layer real-data Trainer runs (3 pairs x 100) and step50 resume
+are exact. Public DDP/FSDP MLP current-vs-HEAD regressions are exact (5 steps).
+VPP2 tiny FSDP itself fails at custom pre_dit Tensor/DTensor handling under both
+current and HEAD public framework. Original full14B 8x32 ZeRO2 remains BLOCKED by
+free GPU memory; none of these diagnostic results certify full-plan acceptance.
