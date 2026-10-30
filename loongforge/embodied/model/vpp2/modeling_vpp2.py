@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -23,9 +22,6 @@ from .modules.mot import MoT
 from .modules.wan_video_clip import WanImageEncoderCLIP
 from .modules.wan_video_dit import WanVideoDiT
 from .modules.wan_video_vae import WanVideoVAE
-
-logger = logging.getLogger(__name__)
-
 
 def _dtype(value: str) -> torch.dtype:
     name = str(value).lower()
@@ -50,17 +46,53 @@ class VPP2Model(LiberoActionModel):
         if not isinstance(cfg, VPP2ModelConfig):
             raise TypeError(f"VPP2Model.from_pretrained expects VPP2ModelConfig, got {type(cfg).__name__}")
         compute_dtype = _dtype(cfg.dtype)
-        # Always construct the large tower on meta.  The eager training mode
-        # below materializes it in the configured dtype before loading; direct
-        # CUDA construction would allocate the default fp32 parameters first
-        # and OOM while the video checkpoint is staged.
+        if not cfg.init_on_meta:
+            if cfg.initialization_seed is not None:
+                # Import at runtime: train.config_map also imports this model.
+                from loongforge.embodied.train.utils.utils import set_seed
+
+                set_seed(cfg.initialization_seed + int(os.environ.get("RANK", "0")))
+            # Use the pinned community factory so checkpoint-excluded random
+            # projections see the same construction order, RNG and fp32 casts.
+            # A meta shell followed by reset_parameters consumes a different
+            # random stream even when both trainers use the same seed.
+            model = cls.from_wan21_14b_pretrained(
+                device=str(torch.device("cuda", torch.cuda.current_device())
+                           if torch.cuda.is_available() else torch.device("cpu")),
+                torch_dtype=compute_dtype,
+                model_id=cfg.model_id,
+                dit_checkpoint_path=cfg.video_checkpoint_path,
+                tokenizer_model_id=cfg.tokenizer_model_id,
+                tokenizer_max_len=cfg.tokenizer_max_len,
+                load_text_encoder=cfg.load_text_encoder,
+                load_clip_encoder=cfg.load_clip_encoder,
+                proprio_dim=cfg.proprio_dim,
+                redirect_common_files=False,
+                video_dit_config=dict(cfg.video_dit_config),
+                action_dit_config=dict(cfg.action_dit_config),
+                action_dit_pretrained_path=cfg.action_dit_pretrained_path,
+                mot_checkpoint_mixed_attn=cfg.mot_checkpoint_mixed_attn,
+                action_chunk_size=cfg.action_chunk_size,
+                action_visible_video_frames=cfg.action_visible_video_frames,
+                action_only_first_frame_fast_path=cfg.action_only_first_frame_fast_path,
+                video_train_shift=float(cfg.video_scheduler["train_shift"]),
+                video_infer_shift=float(cfg.video_scheduler["infer_shift"]),
+                video_num_train_timesteps=int(cfg.video_scheduler["num_train_timesteps"]),
+                video_train_sampling_strategy=str(cfg.video_scheduler["train_sampling_strategy"]),
+                video_train_beta_alpha=float(cfg.video_scheduler["beta_alpha"]),
+                video_train_beta_beta=float(cfg.video_scheduler["beta_beta"]),
+                **{f"action_{key}": value for key, value in cfg.action_scheduler.items()},
+                **{f"loss_{key}": value for key, value in cfg.loss.items()},
+            )
+            model.config = cfg
+            model.freeze_modules()
+            return model
+        # Deferred loading constructs a storage-free shell before materialization.
         device = torch.device("meta")
         video_cfg = dict(cfg.video_dit_config)
         action_cfg = dict(cfg.action_dit_config)
         video_cfg["action_dim"] = cfg.action_dim
         action_cfg["action_dim"] = cfg.action_dim
-        # P2-1 deliberately builds a storage-free shell.  P2-2 owns loading and
-        # materialization; no 32 GB checkpoint is touched here.
         with init_on_device(device, include_buffers=False):
             video_expert = WanVideoDiT(**video_cfg)
             action_expert = ActionDiT(**action_cfg)
@@ -103,22 +135,6 @@ class VPP2Model(LiberoActionModel):
             "video_dit": cfg.video_checkpoint_path,
             "action_dit_backbone": cfg.action_dit_pretrained_path,
         }
-        if not cfg.init_on_meta:
-            # The generic embodied trainer wraps a regular DDP model before its
-            # deferred-meta materialization hook.  Eager VPP2 construction must
-            # therefore load the complete strict bundle before that wrapper.
-            target = (
-                torch.device("cuda", torch.cuda.current_device())
-                if torch.cuda.is_available()
-                else torch.device("cpu")
-            )
-            model.materialize(target, cfg.dtype)
-            model.load_pretrained(cfg.video_checkpoint_path, device=target)
-            logger.info(
-                "VPP2 eager strict bundle loaded: video=%s action=%s",
-                cfg.video_checkpoint_path,
-                cfg.action_dit_pretrained_path,
-            )
         model.freeze_modules()
         return model
 
@@ -167,7 +183,7 @@ class VPP2Model(LiberoActionModel):
         return self
 
     def materialize(self, device: torch.device | str, dtype: str = "bfloat16") -> None:
-        """Materialize the P2-1 meta shell for the later checkpoint-loading task."""
+        """Allocate the meta model and initialize checkpoint-excluded projections."""
         target = torch.device(device)
         self.to_empty(device=target)
         compute_dtype = _dtype(dtype)
@@ -360,10 +376,6 @@ class VPP2Model(LiberoActionModel):
                     f"unexpected={clip_result.unexpected_keys}"
                 )
         self.freeze_modules()
-        if self.config.alignment_init_path:
-            from .alignment import load_alignment_init
-
-            load_alignment_init(self, self.config.alignment_init_path)
         return {
             "video": {
                 "path": str(video_path),
@@ -394,8 +406,6 @@ class VPP2Model(LiberoActionModel):
 
     def forward(self, batch, iteration=None, **kwargs):
         """Run BASE's action-only training loss with the trainer's iteration kwarg."""
-        if os.environ.get("VPP2_ITERATION_PROBE", "0").strip().lower() in {"1", "true", "yes", "on"}:
-            logger.info("VPP2_ITERATION_PROBE iteration=%r", iteration)
         del iteration, kwargs
         sample = batch.to_sample() if hasattr(batch, "to_sample") else batch
         loss, metrics = self.training_loss(sample, training_stage="action")
@@ -407,20 +417,8 @@ class VPP2Model(LiberoActionModel):
         return loss, {"video_loss": video_loss.detach(), "action_loss": action_loss.detach()}
 
     def on_after_data_iterators_initialized(self, *, args, ctx, optimizer=None, **kwargs):
-        """Apply VPP2 optimizer policy and optional comparison RNG after setup."""
-        if optimizer is not None and args.optimizer == "AdamW":
-            # The reference uses scalar AdamW. Keep this recipe local instead
-            # of forcing every DeepSpeed model to use VPP2's optimizer policy.
-            for group in optimizer.param_groups:
-                group["foreach"] = False
-        if self.config.alignment_seed is not None and not args.resume:
-            import json
+        """Start the training RNG stream after model and loader initialization."""
+        if self.config.initialization_seed is not None and not args.resume:
+            from loongforge.embodied.train.utils.utils import set_seed
 
-            from .alignment import parameter_fingerprint, seed_training
-
-            if ctx.is_main:
-                output = Path(args.output_dir)
-                (output / "initial_trainable.json").write_text(
-                    json.dumps(parameter_fingerprint(self), indent=2), encoding="utf-8"
-                )
-            seed_training(self.config.alignment_seed, ctx.rank)
+            set_seed(self.config.initialization_seed + ctx.rank)

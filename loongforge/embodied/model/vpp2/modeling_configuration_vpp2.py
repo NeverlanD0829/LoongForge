@@ -45,9 +45,8 @@ class VPP2ModelConfig:
     action_visible_video_frames: int = 3
     action_only_first_frame_fast_path: bool = True
     mot_checkpoint_mixed_attn: bool = True
-    # Opt-in comparison controls: BASE initializes before its trainer seeds RNG.
-    alignment_init_path: str | None = None
-    alignment_seed: int | None = None
+    # Reproduce fresh checkpoint-excluded projections and the training RNG stream.
+    initialization_seed: int | None = None
     disable_train_autocast: bool = False
     init_on_meta: bool = True
     video_dit_config: dict[str, Any] = field(default_factory=lambda: {

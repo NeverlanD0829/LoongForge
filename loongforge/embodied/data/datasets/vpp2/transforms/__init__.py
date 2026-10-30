@@ -15,3 +15,4 @@ __all__ = [
     "VPP2Preprocessor",
     "build_vpp2_transforms",
 ]
+from .robodojo import RoboDojoBatch, RoboDojoPreprocessor

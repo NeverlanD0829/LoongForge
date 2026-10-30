@@ -88,7 +88,12 @@ def initialize_deepspeed(
 
     # This backend was validated with 0.18.9. Keep its conservative version
     # guard local; do not upgrade the entire project's dependency for VPP2.
-    if Version(deepspeed.__version__) < Version("0.18.9"):
+    # The defect it guards against only manifests with multiple microbatches,
+    # so a single-microbatch run stays correct on the pyproject-pinned 0.17.6.
+    if (
+        Version(deepspeed.__version__) < Version("0.18.9")
+        and int(training_args.gradient_accumulation_steps) > 1
+    ):
         raise RuntimeError(
             "Embodied DeepSpeed requires deepspeed>=0.18.9 for correct ZeRO-2 "
             "gradient accumulation; older versions can discard earlier "

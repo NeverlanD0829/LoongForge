@@ -4,8 +4,7 @@ model:
   model_id: ${oc.env:VPP2_ASSETS_ROOT,./vpp2_assets}/Wan2.1-I2V-14B-480P
   video_checkpoint_path: ${oc.env:VPP2_VIDEO_CHECKPOINT,${oc.env:VPP2_ASSETS_ROOT,./vpp2_assets}/libero_video_step010000.pt}
   action_dit_pretrained_path: ${oc.env:VPP2_ASSETS_ROOT,./vpp2_assets}/libero/action_init.pt
-  # The standard DDP launcher eagerly materializes and strictly loads at build
-  # time. Probe scripts can request init_on_meta=True explicitly.
+  # Eager construction strictly loads all weights before distributed wrapping.
   init_on_meta: false
   load_text_encoder: false
   load_clip_encoder: true

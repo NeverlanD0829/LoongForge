@@ -100,6 +100,9 @@ nsight_*/
 # Local-only asset & site workspaces (not for publishing)
 /images/
 /website/
+/vpp2_assets/
+/logs/
+/dataset_stats.json
 
 # Local AI coding assistant rules
 /.comate/

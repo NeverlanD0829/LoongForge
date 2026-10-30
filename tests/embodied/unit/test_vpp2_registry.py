@@ -1,6 +1,6 @@
 # Copyright 2026 The LoongForge Authors.
 # SPDX-License-Identifier: Apache-2.0
-"""P2-1 registration and meta-construction smoke tests."""
+"""VPP2 registration, loading and freeze contracts."""
 
 import inspect
 from unittest.mock import patch
@@ -38,12 +38,15 @@ def test_vpp2_action_stage_freeze_contract_survives_train_call():
 
 
 def test_vpp2_eager_config_materializes_and_strict_loads_before_wrap():
-    """The DDP launcher must not hand a meta tensor to the generic wrapper."""
-    cfg = VPP2ModelConfig(init_on_meta=False)
-    with patch.object(VPP2Model, "materialize") as materialize, patch.object(
-        VPP2Model, "load_pretrained"
-    ) as load_pretrained:
-        build_model(cfg)
+    """Eager launches use the community factory's seeded construction order."""
+    import torch
 
-    materialize.assert_called_once()
-    load_pretrained.assert_called_once_with(cfg.video_checkpoint_path, device=materialize.call_args.args[0])
+    cfg = VPP2ModelConfig(init_on_meta=False)
+    loaded = torch.nn.Linear(2, 2)
+    loaded.freeze_modules = lambda: loaded.requires_grad_(False)
+    with patch.object(VPP2Model, "from_wan21_14b_pretrained", return_value=loaded) as factory:
+        model = build_model(cfg)
+    assert model is loaded and model.config is cfg
+    assert not any(p.is_meta or p.requires_grad for p in model.parameters())
+    assert factory.call_args.kwargs["dit_checkpoint_path"] == cfg.video_checkpoint_path
+    assert factory.call_args.kwargs["action_dit_pretrained_path"] == cfg.action_dit_pretrained_path

@@ -45,6 +45,12 @@ def _vpp2_strategy_builder() -> Callable:
     return build_vpp2_lerobot_dataset
 
 
+def _vpp2_robodojo_strategy_builder() -> Callable:
+    from loongforge.embodied.data.datasets.vpp2.robodojo import build_robodojo_dataset
+
+    return build_robodojo_dataset
+
+
 def _lingbot_va_strategy_builder() -> Callable:
     from loongforge.embodied.data.datasets.lingbot_va import build_lingbot_dataset
 
@@ -89,6 +95,7 @@ _DATASET_STRATEGY_LOADERS: dict[str, Callable[[], Callable]] = {
     "vlda": _vlda_strategy_builder,
     "fastwam": _fastwam_strategy_builder,
     "vpp2": _vpp2_strategy_builder,
+    "vpp2_robodojo": _vpp2_robodojo_strategy_builder,
     "lingbot_va": _lingbot_va_strategy_builder,
     "groot_n1_7": _groot_n1_7_strategy_builder,
     "cosmos3_droid": _cosmos3_droid_strategy_builder,

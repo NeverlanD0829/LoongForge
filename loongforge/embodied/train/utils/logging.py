@@ -530,7 +530,7 @@ class TrainingLogger:
             if "loss" in key and isinstance(value, (int, float)):
                 log_string += " {}: {:.6E} |".format(key.replace("_", " "), value)
         log_string += " loss scale: 1.0 |"
-        if grad_norm is not None and grad_norm > 0:
+        if grad_norm is not None and grad_norm >= 0:
             log_string += " grad norm: {:.6f} |".format(grad_norm)
         log_string += " number of skipped iterations: {:3d} |".format(skipped_iters)
         log_string += " number of nan iterations: {:3d} |".format(nan_iters)

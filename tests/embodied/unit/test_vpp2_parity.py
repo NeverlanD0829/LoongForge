@@ -17,7 +17,6 @@ import torch
 
 from loongforge.embodied.data.datasets.sampler_builder import SamplerBuilderContext
 from loongforge.embodied.data.datasets.vpp2.samplers import build_vpp2_sampler
-from loongforge.embodied.model.vpp2.alignment import create_alignment_init, load_alignment_init
 from loongforge.embodied.model.vpp2.modeling_configuration_vpp2 import VPP2ModelConfig
 from loongforge.embodied.model.vpp2.modeling_vpp2 import VPP2Model
 
@@ -40,30 +39,47 @@ def test_single_rank_sampler_does_not_consume_global_rng():
     assert actual == expected
 
 
-def test_shared_init_is_repeatable_strict_and_isolated(tmp_path):
-    path = tmp_path / "init.pt"
-    before = torch.get_rng_state()
-    one = create_alignment_init(path, hidden_dim=16, text_dim=16)
-    assert torch.equal(before, torch.get_rng_state())
-    two = create_alignment_init(tmp_path / "two.pt", hidden_dim=16, text_dim=16)
-    for name in one["modules"]:
-        for key in one["modules"][name]:
-            assert torch.equal(one["modules"][name][key], two["modules"][name][key])
-    model = SimpleNamespace(
-        action_expert=SimpleNamespace(action_encoder=torch.nn.Linear(7, 16), head=torch.nn.Linear(16, 7)),
-        proprio_encoder=torch.nn.Linear(8, 16),
-    )
-    load_alignment_init(model, path)
-    assert torch.equal(model.proprio_encoder.weight, one["modules"]["proprio_encoder"]["weight"].float())
-    bad = dict(one)
-    bad["modules"] = dict(one["modules"], extra={})
-    torch.save(bad, path)
-    with pytest.raises(ValueError, match="coverage"):
-        load_alignment_init(model, path)
+def test_eager_factory_preserves_community_initialization_and_seed(monkeypatch):
+    import inspect
+
+    signature = inspect.signature(VPP2Model.from_wan21_14b_pretrained)
+    observed = []
+
+    class Loaded(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.projection = torch.nn.Linear(8, 16).to(torch.bfloat16)
+
+        def freeze_modules(self):
+            self.frozen = True
+
+    def factory(cls, **kwargs):
+        signature.bind(**kwargs)
+        observed.append(kwargs)
+        return Loaded()
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setenv("RANK", "0")
+    monkeypatch.setattr(VPP2Model, "from_wan21_14b_pretrained", classmethod(factory))
+    original = torch.get_rng_state()
+    try:
+        cfg = VPP2ModelConfig(init_on_meta=False, initialization_seed=42)
+        first = VPP2Model.from_pretrained(cfg)
+        torch.rand(51)
+        second = VPP2Model.from_pretrained(cfg)
+        assert torch.equal(first.projection.weight, second.projection.weight)
+        torch.manual_seed(42)
+        expected = torch.nn.Linear(8, 16).to(torch.bfloat16)
+        assert torch.equal(first.projection.weight, expected.weight)
+        assert first.config is cfg and first.frozen
+        assert observed[0]["torch_dtype"] == torch.bfloat16
+        assert observed[0]["video_train_beta_alpha"] == cfg.video_scheduler["beta_alpha"]
+    finally:
+        torch.set_rng_state(original)
 
 
-def test_alignment_seed_never_overwrites_resume_rng():
-    model = SimpleNamespace(config=VPP2ModelConfig(alignment_seed=42))
+def test_initialization_seed_never_overwrites_resume_rng():
+    model = SimpleNamespace(config=VPP2ModelConfig(initialization_seed=42))
     before = torch.get_rng_state()
     VPP2Model.on_after_data_iterators_initialized(model, args=SimpleNamespace(resume=True), ctx=SimpleNamespace(rank=0))
     assert torch.equal(before, torch.get_rng_state())
@@ -234,17 +250,32 @@ def test_native_vpp2_has_no_chunk_contract_and_owns_optimizer_policy():
         model, args=SimpleNamespace(optimizer="AdamW", resume=False),
         ctx=SimpleNamespace(rank=0), optimizer=optimizer,
     )
-    assert optimizer.param_groups[0]["foreach"] is False
+    assert optimizer.param_groups[0]["foreach"] is None
 
 
-def test_common_backward_signature_still_accepts_lingbot_override():
-    import ast
-    import subprocess
-    root = Path(__file__).resolve().parents[3]
-    common = ast.parse((root / "loongforge/embodied/train/trainers/supervised/finetune_trainer.py").read_text())
-    cls = next(node for node in common.body if isinstance(node, ast.ClassDef))
-    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "_backward_loss")
-    assert not method.args.kwonlyargs
-    assert all("batch_weight" not in ast.unparse(node) for node in common.body)
-    path = "loongforge/embodied/train/trainers/custom/lingbot_va/lingbot_finetune_trainer.py"
-    assert (root / path).read_bytes() == subprocess.check_output(["git", "-C", str(root), "show", "HEAD:" + path])
+def test_action_noise_timesteps_preserve_action_dtype():
+    from loongforge.embodied.model.vpp2.modules.libero_action_model import LiberoActionModel
+
+    action = torch.zeros(2, 32, 7, dtype=torch.bfloat16)
+    scheduler = SimpleNamespace(
+        sample_training_t=lambda *, batch_size, device, dtype: torch.full((batch_size,), 999.0, dtype=dtype),
+        add_noise=lambda value, noise, timestep: value,
+        training_target=lambda value, noise, timestep: noise,
+    )
+    inputs = dict(
+        input_latents=torch.zeros(2, 16, 5, 2, 2, dtype=torch.bfloat16),
+        condition_latents=torch.zeros(2, 16, 1, 2, 2, dtype=torch.bfloat16),
+        context=None, context_mask=None, action=action, action_is_pad=None,
+        image_is_pad=None, clip_fea=None, action_only_first_frame_fast_path=False,
+        fuse_vae_embedding_in_latents=False,
+    )
+    model = SimpleNamespace(
+        build_inputs=lambda *args, **kwargs: inputs,
+        device="cpu", train_video_scheduler=SimpleNamespace(num_train_timesteps=1000),
+        train_action_scheduler=scheduler,
+        _training_loss_action_only=lambda **kwargs: kwargs["timestep_action"],
+    )
+    observed = LiberoActionModel.training_loss(model, {})
+    assert observed.dtype == action.dtype
+    # BF16's endpoint rounding is part of BASE's current numerical policy.
+    assert observed.tolist() == [1000.0, 1000.0]

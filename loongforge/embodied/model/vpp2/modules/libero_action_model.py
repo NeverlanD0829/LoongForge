@@ -498,8 +498,6 @@ class LiberoActionModel(VPP2):
         loss_dict = {
             "loss_video": weighted_video_loss,
             "loss_action": self.loss_lambda_action * float(loss_action.detach().item()),
-            "action_timestep": float(timestep_action.detach().float().mean().item()),
-            "action_weight": float(action_weight.detach().float().mean().item()),
         }
         return (loss_total, loss_dict)
 
@@ -572,10 +570,7 @@ class LiberoActionModel(VPP2):
             timestep_action = shared_action_timestep.to(dtype=action.dtype)
         else:
             timestep_action = self.train_action_scheduler.sample_training_t(
-                # BF16 rounds values near 1000 to the endpoint, where the
-                # flow weighting function is exactly zero. Preserve sampled
-                # continuous timesteps in FP32 even with BF16 model weights.
-                batch_size=batch_size, device=self.device, dtype=torch.float32
+                batch_size=batch_size, device=self.device, dtype=action.dtype
             )
         noisy_action = self.train_action_scheduler.add_noise(action, noise_action, timestep_action)
         target_action = self.train_action_scheduler.training_target(
