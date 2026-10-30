@@ -138,6 +138,9 @@ class VPP2KeyMappingTransform(BaseTransform):
 @register_transform_builder("vpp2")
 def build_vpp2_transforms(ctx: TransformBuilderContext):
     """Build VPP2 transforms from typed config fields."""
+    if ctx.data_cfg.pipeline:
+        # Native pipelines already apply their configured sample transforms.
+        return []
     if ctx.data_cfg.norm_stats_path is None:
         raise ValueError("VPP2 requires data_cfg.norm_stats_path")
     return [

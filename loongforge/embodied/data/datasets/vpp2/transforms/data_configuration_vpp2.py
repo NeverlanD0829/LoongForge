@@ -13,6 +13,8 @@ from typing import Any
 class VPP2DataConfig:
     """Data fields that are not part of the VPP2 model architecture."""
 
+    # An explicit native pipeline performs its own per-sample preprocessing.
+    pipeline: dict[str, Any] = field(default_factory=dict)
     num_frames: int = 65
     action_video_freq_ratio: int = 4
     image_size: int = 224

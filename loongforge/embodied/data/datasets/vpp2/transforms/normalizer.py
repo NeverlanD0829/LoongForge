@@ -1,20 +1,28 @@
 # Copyright 2026 The LoongForge Authors.
 # SPDX-License-Identifier: Apache-2.0
-# Adapted from MIT-licensed VPP2; see robodojo_impl/NOTICE.md.
+# Adapted from MIT-licensed VPP2.
 import json
 from collections import defaultdict
 from logging import getLogger as get_logger
-from typing import Annotated, Any, Dict, Literal, Union
+from typing import Annotated, Any, Callable, Dict, Literal, Union
 
 import numpy as np
 import torch
-
-from loongforge.embodied.data.datasets.vpp2.robodojo_impl.pytorch_utils import dict_apply
 
 logger = get_logger(__name__)
 
 ConstConstStr = Annotated[str, "format: 'const_min/const_max', where const_min and const_max give the constant range"]
 NormMode = Union[Literal["min/max", "q01/q99", "z-score"], ConstConstStr]
+
+
+def dict_apply(x: Dict[str, torch.Tensor], func: Callable[[torch.Tensor], torch.Tensor]) -> Dict[str, torch.Tensor]:
+    result = dict()
+    for key, value in x.items():
+        if isinstance(value, dict):
+            result[key] = dict_apply(value, func)
+        else:
+            result[key] = func(value)
+    return result
 
 
 class LinearNormalizer:

@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 
 from .wan_video_dit import flash_attention, modulate, rope_apply
-from .logging_utils import get_logger
+from logging import getLogger as get_logger
 
 logger = get_logger(__name__)
 

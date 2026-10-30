@@ -37,8 +37,6 @@ from loongforge.embodied.data.datasets.wall_oss_0_5.transforms.data_configuratio
     WallOss05DataConfig,
 )
 from loongforge.embodied.model.vpp2.modeling_configuration_vpp2 import VPP2ModelConfig
-from loongforge.embodied.model.vpp2.modeling_robodojo import RoboDojoModelConfig
-from loongforge.embodied.data.datasets.vpp2.robodojo import RoboDojoDataConfig
 from loongforge.embodied.data.datasets.vpp2.transforms.data_configuration_vpp2 import VPP2DataConfig
 
 _CONFIGS_DIR = (
@@ -93,7 +91,6 @@ MODEL_SCHEMA = {
     ),
     "wall_oss_0_5": ModelSchema("wall_oss_0_5.yaml", WallOss05ModelConfig, WallOss05DataConfig),
     "vpp2": ModelSchema("vpp2.yaml", VPP2ModelConfig, VPP2DataConfig),
-    "vpp2_robodojo": ModelSchema("vpp2_robodojo.yaml", RoboDojoModelConfig, RoboDojoDataConfig),
 }
 
 def get_model_schema(model_name: str) -> ModelSchema:

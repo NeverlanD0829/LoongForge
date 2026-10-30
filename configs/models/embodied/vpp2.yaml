@@ -1,6 +1,7 @@
 # VPP2 Wan2.1-I2V-14B + ActionDiT MoT (LIBERO action stage).
 model:
   model_type: vpp2
+  training_stage: action
   model_id: ${oc.env:VPP2_ASSETS_ROOT,./vpp2_assets}/Wan2.1-I2V-14B-480P
   video_checkpoint_path: ${oc.env:VPP2_VIDEO_CHECKPOINT,${oc.env:VPP2_ASSETS_ROOT,./vpp2_assets}/libero_video_step010000.pt}
   action_dit_pretrained_path: ${oc.env:VPP2_ASSETS_ROOT,./vpp2_assets}/libero/action_init.pt

@@ -1,6 +1,6 @@
 # Copyright 2026 The LoongForge Authors.
 # SPDX-License-Identifier: Apache-2.0
-"""Typed configuration for the VPP2 LIBERO action-stage model."""
+"""Typed VPP2 configuration for action-stage and joint Video/Action training."""
 
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ class VPP2ModelConfig:
     """
 
     model_type: str = "vpp2"
+    training_stage: str = "action"
     model_id: str = field(default_factory=lambda: _asset_path("Wan2.1-I2V-14B-480P"))
     video_checkpoint_path: str = field(
         default_factory=lambda: _asset_path("libero", "video_step010000.pt")
@@ -37,7 +38,7 @@ class VPP2ModelConfig:
     load_clip_encoder: bool = True
     tokenizer_model_id: str | None = None
     tokenizer_max_len: int = 512
-    # Action-stage contract shared with the data pipeline.
+    # Architecture and temporal contract shared with the data pipeline.
     action_dim: int = 7
     action_horizon: int = 32
     proprio_dim: int | None = 8
@@ -102,6 +103,10 @@ class VPP2ModelConfig:
     def __post_init__(self) -> None:
         if self.model_type != "vpp2":
             raise ValueError(f"VPP2ModelConfig.model_type must be 'vpp2', got {self.model_type!r}")
+        if self.training_stage not in {"action", "joint"}:
+            raise ValueError("VPP2 training_stage must be action or joint")
+        if self.training_stage == "joint" and self.action_only_first_frame_fast_path:
+            raise ValueError("Joint training requires action_only_first_frame_fast_path=False")
         if self.action_dim != int(self.action_dit_config["action_dim"]):
             raise ValueError("action_dim must match action_dit_config.action_dim")
         if self.proprio_dim is not None and self.proprio_dim <= 0:

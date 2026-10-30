@@ -46,7 +46,7 @@ def _vpp2_strategy_builder() -> Callable:
 
 
 def _vpp2_robodojo_strategy_builder() -> Callable:
-    from loongforge.embodied.data.datasets.vpp2.robodojo import build_robodojo_dataset
+    from loongforge.embodied.data.datasets.vpp2 import build_robodojo_dataset
 
     return build_robodojo_dataset
 

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 from typing import Any
@@ -15,10 +16,10 @@ from loongforge.embodied.model.registry import register_model
 
 from .modeling_configuration_vpp2 import VPP2ModelConfig
 from .modules.action_dit import ActionDiT
-from .modules.helpers.io import load_state_dict
-from .modules.helpers.loader import _convert_vae_state_dict, _load_state_dict_assign
+from .modules.checkpoint import _convert_vae_state_dict, _load_state_dict_assign, load_state_dict
 from .modules.libero_action_model import LiberoActionModel
 from .modules.mot import MoT
+from .modules.vpp2 import VPP2
 from .modules.wan_video_clip import WanImageEncoderCLIP
 from .modules.wan_video_dit import WanVideoDiT
 from .modules.wan_video_vae import WanVideoVAE
@@ -36,7 +37,7 @@ def _dtype(value: str) -> torch.dtype:
 
 @register_model("vpp2")
 class VPP2Model(LiberoActionModel):
-    """Action-stage VPP2 model implementing the embodied trainer contract."""
+    """VPP2 model entry with action-stage behavior and a joint-training variant."""
 
     _no_split_modules = ["DiTBlock", "WanVideoDiT", "ActionDiT"]
     config_class = VPP2ModelConfig
@@ -45,6 +46,8 @@ class VPP2Model(LiberoActionModel):
     def from_pretrained(cls, cfg: VPP2ModelConfig) -> "VPP2Model":
         if not isinstance(cfg, VPP2ModelConfig):
             raise TypeError(f"VPP2Model.from_pretrained expects VPP2ModelConfig, got {type(cfg).__name__}")
+        if cfg.training_stage == "joint" and cls is VPP2Model:
+            return _VPP2JointModel.from_pretrained(cfg)
         compute_dtype = _dtype(cfg.dtype)
         if not cfg.init_on_meta:
             if cfg.initialization_seed is not None:
@@ -422,3 +425,65 @@ class VPP2Model(LiberoActionModel):
             from loongforge.embodied.train.utils.utils import set_seed
 
             set_seed(self.config.initialization_seed + ctx.rank)
+
+
+class _VPP2JointModel(VPP2):
+    """Joint Video/Action behavior selected by VPP2ModelConfig.training_stage."""
+
+    config_class = VPP2ModelConfig
+    _no_split_modules = VPP2Model._no_split_modules
+    default_fp8_targets = staticmethod(VPP2Model.default_fp8_targets)
+    default_lora_targets = staticmethod(VPP2Model.default_lora_targets)
+    load_pretrained = VPP2Model.load_pretrained
+    on_after_data_iterators_initialized = VPP2Model.on_after_data_iterators_initialized
+
+    @classmethod
+    def from_pretrained(cls, cfg):
+        return VPP2Model.from_pretrained.__func__(cls, cfg)
+
+    def build_lr_scheduler(self, optimizer, training_args):
+        """Keep the released joint recipe's 80k cosine decay and 100k tail.
+
+        The two parameter groups use the same multiplier, preserving their LR
+        ratio. Stopping early must not shorten either decay phase.
+        """
+        warmup = training_args.lr_warmup_iters
+
+        def lr_multiplier(step):
+            step = max(int(step), 0)
+            if step > 80000:
+                progress = min(max((step - 80000) / 20000, 0.0), 1.0)
+                return 0.001 + (0.01 - 0.001) * (1 + math.cos(math.pi * progress)) / 2
+            if warmup > 0 and step < warmup:
+                return float(step + 1) / float(warmup)
+            progress = (step - warmup) / (80000 - warmup)
+            return 0.01 + (1.0 - 0.01) * 0.5 * (1.0 + math.cos(math.pi * progress))
+
+        return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_multiplier)
+
+    def set_frozen_modules_to_eval_mode(self):
+        for module in (self.vae, self.clip_encoder, self.text_encoder):
+            if module is not None:
+                module.eval()
+
+    def freeze_modules(self):
+        self.requires_grad_(False)
+        self.mot.train().requires_grad_(True)
+        if self.proprio_encoder is not None:
+            self.proprio_encoder.train().requires_grad_(True)
+        self.set_frozen_modules_to_eval_mode()
+
+    def train(self, mode=True):
+        # BASE keeps the outer model in eval and enables its two experts only.
+        torch.nn.Module.train(self, False)
+        self.mot.train(mode)
+        if self.proprio_encoder is not None:
+            self.proprio_encoder.train(mode)
+        self.set_frozen_modules_to_eval_mode()
+        return self
+
+    def forward(self, batch, iteration=None, **kwargs):
+        sample = batch.to_sample() if hasattr(batch, "to_sample") else batch
+        loss, metrics = self.training_loss(sample)
+        observed = {"loss": loss.detach(), "video_loss": metrics["loss_video"], "action_loss": metrics["loss_action"]}
+        return loss, observed

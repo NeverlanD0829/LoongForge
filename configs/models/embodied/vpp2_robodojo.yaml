@@ -56,7 +56,8 @@ model:
   loss:
     lambda_video: 1.0
     lambda_action: 1.0
-  model_type: vpp2_robodojo
+  model_type: vpp2
+  training_stage: joint
   video_checkpoint_path: ${oc.env:VPP2_VIDEO_INIT}
   init_on_meta: false
   initialization_seed: 100008
@@ -66,7 +67,7 @@ model:
   action_only_first_frame_fast_path: false
 data:
   pipeline:
-    _target_: loongforge.embodied.data.datasets.vpp2.robodojo_impl.lerobot.critical_phase_dataset.CriticalPhaseVideoEventDataset
+    _target_: loongforge.embodied.data.datasets.vpp2.critical_phase.CriticalPhaseVideoEventDataset
     metadata_path: ${oc.env:VPP2_PREPARED}/train.csv
     video_root: ${oc.env:VPP2_MEDIA_ROOT}
     balance_column: task_name
@@ -103,7 +104,7 @@ data:
     skip_padding_as_possible: false
     max_padding_retry: 10
     processor:
-      _target_: loongforge.embodied.data.datasets.vpp2.robodojo_impl.lerobot.processors.vpp2_processor.VPP2Processor
+      _target_: loongforge.embodied.data.datasets.vpp2.transforms.vpp2_processor.VPP2Processor
       shape_meta:
         images:
         - key: image
@@ -132,11 +133,11 @@ data:
       norm_default_mode: z-score
       norm_exception_mode: null
       action_state_merger:
-        _target_: loongforge.embodied.data.datasets.vpp2.robodojo_impl.lerobot.transforms.action_state_merger.ConcatLeftAlign
+        _target_: loongforge.embodied.data.datasets.vpp2.transforms.vpp2_processor.ConcatLeftAlign
       train_transforms:
-      - _target_: loongforge.embodied.data.datasets.vpp2.robodojo_impl.lerobot.transforms.image.ToTensor
+      - _target_: loongforge.embodied.data.datasets.vpp2.transforms.image.ToTensor
       val_transforms:
-      - _target_: loongforge.embodied.data.datasets.vpp2.robodojo_impl.lerobot.transforms.image.ToTensor
+      - _target_: loongforge.embodied.data.datasets.vpp2.transforms.image.ToTensor
       num_image_obs_steps: 17
     pretrained_norm_stats: ${oc.env:VPP2_PREPARED}/dataset_stats.json
     use_relative_action: false

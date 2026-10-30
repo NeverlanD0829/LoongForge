@@ -5,10 +5,10 @@ import torch
 import torch.nn as nn
 from typing import Any, Dict, Optional
 
-from .logging_utils import get_logger
+from logging import getLogger as get_logger
 
-from .helpers.gradient import gradient_checkpoint_forward
 from .wan_video_dit import (
+    gradient_checkpoint_forward,
     DiTBlock,
     WanRMSNorm,
     rope_apply,

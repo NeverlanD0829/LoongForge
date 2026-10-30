@@ -4,6 +4,5 @@
 
 from .modeling_configuration_vpp2 import VPP2ModelConfig
 from .modeling_vpp2 import VPP2Model
-from .modeling_robodojo import RoboDojoModel, RoboDojoModelConfig
 
-__all__ = ["VPP2Model", "VPP2ModelConfig", "RoboDojoModel", "RoboDojoModelConfig"]
+__all__ = ["VPP2Model", "VPP2ModelConfig"]

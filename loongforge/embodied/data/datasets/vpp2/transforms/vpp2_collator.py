@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
+from torch.utils.data import default_collate
 
 from loongforge.embodied.data.datasets.transforms.collator import (
     BasePreprocessor,
@@ -49,6 +50,8 @@ class VPP2Preprocessor(BasePreprocessor):
 
     @classmethod
     def from_config(cls, model_cfg, data_cfg, training_args=None, dataset_stats=None, dataset=None):
+        if data_cfg.pipeline:
+            return RoboDojoPreprocessor()
         return cls()
 
     def __call__(self, examples: list[dict[str, Any]]) -> VPP2PreparedBatch:
@@ -65,3 +68,23 @@ class VPP2Preprocessor(BasePreprocessor):
             proprio_is_pad=torch.stack([item["proprio_is_pad"] for item in examples]),
             video_num_frames=torch.stack([item["video_num_frames"] for item in examples]),
         )
+
+
+@dataclass
+class RoboDojoBatch(PreparedBatch):
+    sample: dict
+
+    @property
+    def action(self):
+        return self.sample["action"]
+
+    def to_sample(self):
+        return self.sample
+
+class RoboDojoPreprocessor(BasePreprocessor):
+    @classmethod
+    def from_config(cls, *args, **kwargs):
+        return cls()
+
+    def __call__(self, examples):
+        return RoboDojoBatch(default_collate(examples))

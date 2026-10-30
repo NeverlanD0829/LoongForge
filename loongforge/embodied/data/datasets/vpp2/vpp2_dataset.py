@@ -1,11 +1,14 @@
 # Copyright 2026 The LoongForge Authors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""VPP2 data strategy for the pinned LIBERO LeRobot v2.1 assets."""
+"""LoongForge dataset builders for VPP2 LIBERO and RoboDojo recipes."""
 
 from __future__ import annotations
 
 from pathlib import Path
+
+from hydra.utils import instantiate
+from omegaconf import OmegaConf
 
 from loongforge.embodied.data.datasets.lerobot_dataset import MultiLeRobotV2Dataset
 
@@ -24,3 +27,8 @@ def build_vpp2_lerobot_dataset(model_cfg, data_cfg, training_args):
         video_backend=training_args.video_backend,
         observation_delta_indices=data_cfg.observation_delta_indices,
     )
+
+
+def build_robodojo_dataset(model_cfg, data_cfg, training_args):
+    """Build the native EE16 pipeline described by the RoboDojo data config."""
+    return instantiate(OmegaConf.create(data_cfg.pipeline))

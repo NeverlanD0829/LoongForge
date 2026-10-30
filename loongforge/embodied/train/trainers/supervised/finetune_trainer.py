@@ -248,7 +248,11 @@ class FinetuneTrainer(BaseTrainer):
         return build_optimizer(self.model, self.training_args)
 
     def _build_scheduler(self):
-        """Build LR scheduler."""
+        """Build the model's LR scheduler when provided, otherwise use CLI settings."""
+        model = unwrap_model(self.model)
+        hook = getattr(model, "build_lr_scheduler", None)
+        if callable(hook):
+            return hook(optimizer=self.optimizer, training_args=self.training_args)
         return build_scheduler(self.optimizer, self.training_args)
 
     def _clip_gradients(self, max_norm: float) -> float:

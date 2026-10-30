@@ -16,7 +16,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_BIN=${LOONGFORGE_PYTHON_BIN:-/usr/bin/python3}
 export PYTHONNOUSERSITE=1
-"$PYTHON_BIN" "$SCRIPT_DIR/check_runtime.py"
 
 # ── Environment ───────────────────────────────────────────────
 export LOONGFORGE_PATH=${LOONGFORGE_PATH:-"$(cd "$SCRIPT_DIR/../../.." && pwd)"}

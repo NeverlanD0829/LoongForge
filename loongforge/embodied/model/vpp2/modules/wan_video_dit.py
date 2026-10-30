@@ -8,10 +8,34 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 
-from .helpers.gradient import gradient_checkpoint_forward
-from .logging_utils import get_logger
+from logging import getLogger as get_logger
 
 logger = get_logger(__name__)
+
+
+def create_custom_forward(module):
+    def custom_forward(*inputs, **kwargs):
+        return module(*inputs, **kwargs)
+
+    return custom_forward
+
+
+def gradient_checkpoint_forward(
+    model,
+    use_gradient_checkpointing,
+    *args,
+    **kwargs,
+):
+    if use_gradient_checkpointing:
+        model_output = torch.utils.checkpoint.checkpoint(
+            create_custom_forward(model),
+            *args,
+            **kwargs,
+            use_reentrant=False,
+        )
+    else:
+        model_output = model(*args, **kwargs)
+    return model_output
 
 
 def flash_attention(

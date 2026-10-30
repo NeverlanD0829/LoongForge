@@ -12,7 +12,7 @@
 #   bash run_robodojo_joint_50.sh model.action_horizon=16
 #
 # Defaults: 8 GPUs × batch 2 = GBS16, 50 updates, no evaluation/checkpoint saves.
-# Resource preparation and usage: README.md.
+# Set ROBODOJO_RESOURCES to the shell file defining training resource paths.
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -82,7 +82,8 @@ SAVE_INTERVAL=${SAVE_INTERVAL:-0}
 
 # ── Model config ──────────────────────────────────────────────
 MODEL_CONFIG_ARGS=(
-    --model-name vpp2_robodojo
+    --model-name vpp2
+    --config-file "$LOONGFORGE_PATH/configs/models/embodied/vpp2_robodojo.yaml"
 )
 
 CONFIG_OVERRIDES=(
@@ -101,7 +102,7 @@ DATA_ARGS=(
 
 # ── Training params ───────────────────────────────────────────
 TRAINING_ARGS=(
-    --trainer-type RoboDojoTrainer
+    --trainer-type FinetuneTrainer
     --train-iters "$TRAIN_ITERS"
     --per-device-batch-size "$PER_DEVICE_BATCH_SIZE"
     --gradient-accumulation-steps "$GRADIENT_ACCUMULATION_STEPS"
@@ -111,9 +112,9 @@ TRAINING_ARGS=(
     --output-dir "$OUTPUT_DIR"
     # Keep the original 500 / 80k / 100k schedule when stopping early.
     --lr-base 1e-4
+    --lr-group video_expert=5e-6
     --lr-warmup-iters 500
     --lr-decay-iters 100000
-    # RoboDojoTrainer builds the Video and Action/proprio parameter groups.
     --optimizer AdamW
     --adam-beta1 0.9
     --adam-beta2 0.95
@@ -137,17 +138,15 @@ LOGGING_ARGS=(
     --wandb-mode disabled
 )
 
-# ── Runtime preflight ─────────────────────────────────────────
+# ── Launch ────────────────────────────────────────────────────
 mkdir -p "$OUTPUT_DIR"
-"$PYTHON_BIN" "$SCRIPT_DIR/check_runtime.py" --require-cuda --output "$OUTPUT_DIR/runtime.json"
 cd "$LOONGFORGE_PATH"
 
-# ── Launch ────────────────────────────────────────────────────
 echo "════════════════════════════════════════════════════════════"
 echo "  LoongForge RoboDojo Joint Training (DeepSpeed ZeRO-2)"
 echo "  Python:     $PYTHON_BIN"
 echo "  GPUs:       $GPUS_PER_NODE"
-echo "  Model:      vpp2_robodojo"
+echo "  Model:      vpp2 (joint)"
 echo "  Data:       $DATASET_PATH"
 echo "  Iterations: $TRAIN_ITERS"
 echo "  Output:     $OUTPUT_DIR"

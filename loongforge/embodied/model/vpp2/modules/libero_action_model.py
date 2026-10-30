@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 from omegaconf import OmegaConf, DictConfig
 from .vpp2 import VPP2
-from .checkpoint_compat import ACTION_FORMAT, action_config
+from .checkpoint import ACTION_FORMAT, action_config
 
 
 class LiberoActionModel(VPP2):

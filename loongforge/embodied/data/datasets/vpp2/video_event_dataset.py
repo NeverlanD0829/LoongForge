@@ -1,10 +1,11 @@
 # Copyright 2026 The LoongForge Authors.
 # SPDX-License-Identifier: Apache-2.0
-# Adapted from MIT-licensed VPP2; see robodojo_impl/NOTICE.md.
+# Adapted from MIT-licensed VPP2.
 import io
 import os
 import traceback
 from collections import OrderedDict, defaultdict
+from logging import getLogger as get_logger
 from pathlib import Path
 from typing import Any, Optional
 
@@ -19,26 +20,31 @@ from omegaconf import DictConfig, OmegaConf
 from PIL import Image
 from tqdm import tqdm
 
-from loongforge.embodied.data.datasets.vpp2.robodojo_impl.dataset_utils import (
+from .transforms.image import (
     CenterCrop,
     Normalize,
     ResizeSmallestSideAspectPreserving,
 )
-
-
-def _is_main_process():
-    return int(os.environ.get("RANK", "0")) == 0
-
-
-from logging import getLogger as get_logger
-
-from loongforge.embodied.data.datasets.vpp2.robodojo_impl import misc
-from loongforge.embodied.data.datasets.vpp2.robodojo_impl.lerobot.utils.normalizer import (
+from .transforms.normalizer import (
     load_dataset_stats_from_json,
     save_dataset_stats_to_json,
 )
 
 logger = get_logger(__name__)
+_work_dir = Path.cwd()
+
+
+def register_work_dir(path):
+    global _work_dir
+    _work_dir = Path(path)
+
+
+def get_work_dir():
+    return str(_work_dir)
+
+
+def _is_main_process():
+    return int(os.environ.get("RANK", "0")) == 0
 
 
 class VideoEventDataset(torch.utils.data.Dataset):
@@ -578,7 +584,7 @@ class VideoEventDataset(torch.utils.data.Dataset):
                     logger.info("Calculating dataset stats for normalization...")
                     dataset_stats = self.get_dataset_stats(processor)
                     if is_main:
-                        work_dir = misc.get_work_dir()
+                        work_dir = get_work_dir()
                         save_dataset_stats_to_json(dataset_stats, os.path.join(work_dir, "dataset_stats.json"))
                 else:
                     dataset_stats = None
@@ -594,7 +600,7 @@ class VideoEventDataset(torch.utils.data.Dataset):
                     dataset_stats = load_dataset_stats_from_json(norm_stats_source)
                     logger.info(f"Using dataset stats: {norm_stats_source}")
                 if _is_main_process():
-                    work_dir = misc.get_work_dir()
+                    work_dir = get_work_dir()
                     save_dataset_stats_to_json(dataset_stats, os.path.join(work_dir, "dataset_stats.json"))
 
             processor.set_normalizer_from_stats(dataset_stats)

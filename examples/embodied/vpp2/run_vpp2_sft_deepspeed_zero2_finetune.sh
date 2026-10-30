@@ -30,7 +30,6 @@ export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
 # Spawned data workers should not wait for online package version checks.
 export NO_ALBUMENTATIONS_UPDATE=${NO_ALBUMENTATIONS_UPDATE:-1}
 export VPP2_DETERMINISTIC=${VPP2_DETERMINISTIC:-1}
-"$PYTHON_BIN" "$SCRIPT_DIR/check_runtime.py"
 
 export VPP2_ASSETS_ROOT=${VPP2_ASSETS_ROOT:-"$LOONGFORGE_PATH/vpp2_assets"}
 

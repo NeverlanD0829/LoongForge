@@ -1,17 +1,17 @@
 # Copyright 2026 The LoongForge Authors.
 # SPDX-License-Identifier: Apache-2.0
-# See LICENSE and THIRD_PARTY_NOTICES.md for retained source notices.
+# Adapted from MIT-licensed VPP2.
 from contextlib import contextmanager, nullcontext
 from typing import Any, Optional, Sequence, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
-from .logging_utils import get_logger
+from logging import getLogger as get_logger
 from .action_dit import ActionDiT
-from .helpers.loader import load_wan21_i2v_14b_components
+from .checkpoint import load_wan21_i2v_14b_components
 from .mot import MoT
-from .schedulers.scheduler_continuous import WanContinuousFlowMatchScheduler
+from .scheduler import WanContinuousFlowMatchScheduler
 
 logger = get_logger(__name__)
 JOINT_DENOISING_MODES = ("policy", "forward_dynamics", "inverse_dynamics")
